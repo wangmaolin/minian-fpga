@@ -10,8 +10,8 @@ import dask.array as darr
 import networkx as nx
 import numba as nb
 import numpy as np
+import numpy.fft as numpy_fft
 import pandas as pd
-import pyfftw.interfaces.numpy_fft as numpy_fft
 import pymetis
 import scipy.sparse
 import sparse
@@ -122,7 +122,7 @@ def noise_fft(
     """
     _T = len(px)
     nr = np.around(np.array(noise_range) * _T).astype(int)
-    px = 1 / _T * np.abs(numpy_fft.rfft(px, threads=threads)[nr[0] : nr[1]]) ** 2
+    px = 1 / _T * np.abs(numpy_fft.rfft(px)[nr[0] : nr[1]]) ** 2
     if noise_method == "mean":
         return np.sqrt(px.mean())
     elif noise_method == "median":

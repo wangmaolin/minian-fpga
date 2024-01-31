@@ -29,7 +29,6 @@ dependencies:
   - requests
   - tqdm
   - cvxpy
-  - pyfftw
   - pymetis
   - rechunker
   - natsort
