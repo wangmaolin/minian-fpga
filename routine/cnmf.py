@@ -613,7 +613,7 @@ def compute_trace(
     uid = A.coords["unit_id"]
     Y = Y.data
     A = darr.from_array(A.data.map_blocks(sparse.COO).compute(), chunks=-1)
-    C = C.data.map_blocks(sparse.COO).T
+    C = C.data.map_blocks(sparse.COO)
     b = (
         b.fillna(0)
         .data.map_blocks(sparse.COO)
