@@ -1,4 +1,3 @@
-# %% imports and definition
 import os
 
 import numpy as np
@@ -14,7 +13,6 @@ FIG_PATH = "./figs/temporal_simulation"
 
 os.makedirs(INT_PATH, exist_ok=True)
 
-# %% generate simulated data
 Y, A, C, S, shifts = generate_data(
     dpath=INT_PATH,
     ncell=100,
@@ -37,7 +35,6 @@ Y, A, C, S, shifts = generate_data(
     save_Y=True,
 )
 
-# %% temporal update
 minian_ds = open_minian(os.path.join(INT_PATH, "simulated"))
 Y, A, C = minian_ds["Y"], minian_ds["A"], minian_ds["C"]
 b = rechunk_like(

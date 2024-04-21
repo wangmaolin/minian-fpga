@@ -26,6 +26,9 @@ from skimage import morphology as moph
 from sklearn.linear_model import LassoLars
 from statsmodels.tsa.stattools import acovf
 
+import logging
+logging.getLogger().setLevel(logging.DEBUG)
+
 from .utilities import (
     custom_arr_optimize,
     custom_delay_optimize,
@@ -1361,13 +1364,27 @@ def update_temporal_cvxpy(
                 warnings.warn("constrained version of problem infeasible")
             raise ValueError
     except (ValueError, cvx.SolverError):
+        obj = cvx.Minimize(cvx.sum(cvx.norm(s, 1, axis=1)))
+        """ Not QP
         lam = sn * sparse_penal
         obj = cvx.Minimize(
             cvx.sum(cvx.sum(noise, axis=1) + cvx.multiply(lam, cvx.norm(s, 1, axis=1)))
         )
+        """
         prob = cvx.Problem(obj, cons)
         try:
-            _ = prob.solve(solver="ECOS", warm_start=warm_start, max_iters=max_iters)
+            """ Not QP
+            _ = prob.solve(solver="ECOS", 
+                           warm_start=warm_start, 
+                           max_iters=max_iters,
+                           verbose=True)
+            logging.debug("ECOS status: {}".format(prob.status))
+            """
+
+            logging.debug("is QP?: {}".format(prob.is_qp()))
+            _ = prob.solve(solver="OSQP", warm_start=warm_start)
+            logging.debug("OSQP status: {}".format(prob.status))
+
             if prob.status in ["infeasible", "unbounded", None]:
                 raise ValueError
         except (cvx.SolverError, ValueError):
