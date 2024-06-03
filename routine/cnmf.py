@@ -1100,6 +1100,7 @@ def update_temporal_block(
     use_smooth=True,
     med_wd=None,
     concurrent=False,
+    return_param=False,
     **kwargs
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -1190,6 +1191,8 @@ def update_temporal_block(
     if med_wd is not None:
         for i, cur_yra in enumerate(YrA):
             YrA[i, :] = med_baseline(cur_yra, med_wd)
+    if return_param:
+        return YrA, g, tn
     if concurrent:
         c, s, b, c0 = update_temporal_cvxpy(YrA, g, tn, **kwargs)
     else:
@@ -1205,7 +1208,13 @@ def update_temporal_block(
 
 
 def update_temporal_cvxpy(
-    y: np.ndarray, g: np.ndarray, sn: np.ndarray, A=None, bseg=None, **kwargs
+    y: np.ndarray,
+    g: np.ndarray,
+    sn: np.ndarray,
+    A=None,
+    bseg=None,
+    return_param=False,
+    **kwargs
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Solve the temporal update optimization problem using `cvxpy`
@@ -1273,6 +1282,7 @@ def update_temporal_cvxpy(
     scs = kwargs.get("scs_fallback")
     c_last = kwargs.get("c_last")
     zero_thres = kwargs.get("zero_thres")
+    binarize = kwargs.get("opt_binarize")
     # conform variables to generalize multiple unit case
     if y.ndim < 2:
         y = y.reshape((1, -1))
@@ -1354,6 +1364,10 @@ def update_temporal_cvxpy(
     cons.append(s >= 0)  # spike train non-negativity
     # noise constraints
     cons_noise = [noise[i] <= thres_sn[i] for i in range(thres_sn.shape[0])]
+    if return_param:
+        return c, s, b, c0, noise, sn, cons
+    # if binarize:
+    #     cons_bin = [s <= 1]
     try:
         obj = cvx.Minimize(cvx.sum(cvx.norm(s, 1, axis=1)))
         prob = cvx.Problem(obj, cons + cons_noise)
