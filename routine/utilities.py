@@ -1310,3 +1310,12 @@ def sps_lstsq(a: csc_matrix, b: np.ndarray, **kwargs):
     for i in range(b.shape[0]):
         out[i, :] = lsqr(a, b[i, :].squeeze(), **kwargs)[0]
     return out
+
+
+def norm(a):
+    amin, amax = np.nanmin(a), np.nanmax(a)
+    diff = amax - amin
+    if diff > 0:
+        return (a - amin) / diff
+    else:
+        return a - amin

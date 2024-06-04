@@ -4,13 +4,17 @@ import os
 import cvxpy as cp
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import plotly.express as px
+import seaborn as sns
 import xarray as xr
 from scipy.sparse import dia_matrix
+from scipy.spatial.distance import cdist
 
 from routine.cnmf import compute_trace, update_temporal_block, update_temporal_cvxpy
 from routine.minian_functions import open_minian
 from routine.simulation import generate_data
-from routine.utilities import rechunk_like
+from routine.utilities import norm, rechunk_like
 
 INT_PATH = "./intermediate/temporal_simulation"
 FIG_PATH = "./figs/temporal_simulation"
@@ -42,7 +46,7 @@ Y, A, C, S, shifts = generate_data(
 
 # %% temporal update
 minian_ds = open_minian(os.path.join(INT_PATH, "simulated"))
-Y, A, C = minian_ds["Y"], minian_ds["A"], minian_ds["C"]
+Y, A, C_true, S_true = minian_ds["Y"], minian_ds["A"], minian_ds["C"], minian_ds["S"]
 b = rechunk_like(
     xr.DataArray(
         np.zeros((A.sizes["height"], A.sizes["width"])),
@@ -57,21 +61,11 @@ f = rechunk_like(
         dims=["frame"],
         coords={"frame": Y.coords["frame"]},
     ),
-    C,
+    C_true,
 )
-YrA = compute_trace(Y, A, b, C, f).compute()
-c, s, b, c0, g = update_temporal_block(
-    np.array(YrA),
-    noise_freq=0.1,
-    p=2,
-    sparse_penal=0.1,
-    max_iters=1000,
-    zero_thres=1e-9,
-)
-
-# %% new method experiment
+YrA_tr = compute_trace(Y, A, b, C_true, f).compute()
 YrA, gs, tns = update_temporal_block(
-    np.array(YrA),
+    np.array(YrA_tr),
     noise_freq=0.1,
     p=1,
     sparse_penal=0.1,
@@ -81,6 +75,13 @@ YrA, gs, tns = update_temporal_block(
 )
 sps_penal = 10
 max_iters = 1000
+C_new = []
+S_new = []
+b_new = []
+C_bin_new = []
+S_bin_new = []
+b_bin_new = []
+scales = []
 for y, g, tn in zip(YrA, gs, tns):
     # parameters
     T = len(y)
@@ -103,6 +104,9 @@ for y, g, tn in zip(YrA, gs, tns):
     cons = [s == G @ c, c >= 0, s >= 0, b >= 0]
     prob = cp.Problem(obj, cons)
     prob.solve(solver=cp.ECOS)
+    C_new.append(c.value)
+    S_new.append(s.value)
+    b_new.append(b.value)
     # bin prob
     scale = 1
     niter = 0
@@ -128,7 +132,7 @@ for y, g, tn in zip(YrA, gs, tns):
             svals.append(s_thres)
             objvals.append(
                 np.linalg.norm(scale * y - G_inv @ s_thres - b_bin.value)
-                + sps_penal * tn * np.linalg.norm(s_thres, 1)
+                # + sps_penal * tn * np.linalg.norm(s_thres, 1)
             )
         opt_idx = np.argmin(objvals)
         opt_s = svals[opt_idx]
@@ -147,26 +151,99 @@ for y, g, tn in zip(YrA, gs, tns):
         else:
             scale = scale_new
             niter += 1
-    break
+    C_bin_new.append(G_inv @ opt_s)
+    S_bin_new.append(opt_s)
+    b_bin_new.append(b_bin.value)
+    scales.append(scale)
+# save variables
+C_new = xr.DataArray(
+    np.concatenate(C_new, axis=1), dims=C_true.dims, coords=C_true.coords, name="C_new"
+)
+S_new = xr.DataArray(
+    np.concatenate(S_new, axis=1), dims=S_true.dims, coords=S_true.coords, name="S_new"
+)
+b_new = xr.DataArray(
+    np.array(b_new),
+    dims="unit_id",
+    coords={"unit_id": C_true.coords["unit_id"]},
+    name="b_new",
+)
+C_bin_new = xr.DataArray(
+    np.concatenate(C_bin_new, axis=1),
+    dims=C_true.dims,
+    coords=C_true.coords,
+    name="C_bin_new",
+)
+S_bin_new = xr.DataArray(
+    np.concatenate(S_bin_new, axis=1),
+    dims=S_true.dims,
+    coords=S_true.coords,
+    name="S_bin_new",
+)
+b_bin_new = xr.DataArray(
+    np.array(b_bin_new),
+    dims="unit_id",
+    coords={"unit_id": C_true.coords["unit_id"]},
+    name="b_bin_new",
+)
+scales = xr.DataArray(
+    np.array(scales),
+    dims="unit_id",
+    coords={"unit_id": C_true.coords["unit_id"]},
+    name="scales",
+)
+updt_ds = xr.merge(
+    [
+        C_new.rename("C_new"),
+        S_new.rename("S_new"),
+        b_new.rename("b_new"),
+        C_bin_new.rename("C_bin_new"),
+        S_bin_new.rename("S_bin_new"),
+        b_bin_new.rename("b_bin_new"),
+        scales.rename("scales"),
+        YrA_tr.rename("YrA"),
+    ]
+)
+updt_ds.to_netcdf(os.path.join(INT_PATH, "temp_res.nc"))
 
-# cons_bin = cons + [s_bin <= 1]
-# prob_bin = cp.Problem(obj, cons_bin)
-# prob.solve(solver=cp.ECOS)
-# %%
-fig, ax = plt.subplots(figsize=(16, 4))
-ax.plot(y.squeeze() * scale_new, label="y")
-ax.plot(np.array(G_inv @ opt_s).squeeze(), label="c")
-ax.plot(opt_s.squeeze(), label="s")
-ax.plot(np.array(G_inv @ opt_s + b_bin.value).squeeze(), label="est")
-ax.legend()
-fig, ax = plt.subplots(figsize=(16, 4))
-ax.plot(y.squeeze(), label="y")
-ax.plot(np.array(G_inv @ s.value).squeeze(), label="c")
-ax.plot(s.value.squeeze(), label="s")
-ax.plot(np.array(G_inv @ s.value + b.value).squeeze(), label="est")
-ax.legend()
+# %% compute correlations
+true_ds = open_minian(os.path.join(INT_PATH, "simulated"))
+temp_ds = xr.open_dataset(os.path.join(INT_PATH, "temp_res.nc"))
+dist = np.diag(
+    cdist(
+        true_ds["S"].transpose("unit_id", "frame"),
+        temp_ds["S_new"].transpose("unit_id", "frame"),
+        metric="correlation",
+    )
+)
+dist_bin = np.diag(
+    cdist(
+        true_ds["S"].transpose("unit_id", "frame"),
+        temp_ds["S_bin_new"].transpose("unit_id", "frame"),
+        metric="correlation",
+    )
+)
+dat = pd.DataFrame(
+    {
+        "method": ["old"] * len(dist) + ["new"] * len(dist_bin),
+        "corr": np.concatenate([dist, dist_bin]),
+    }
+)
 fig, ax = plt.subplots()
-ax.plot(scale_vals, label="scale")
-ax.plot(opt_obj_vals, label="obj")
-ax.plot(opt_lb_vals, label="lb")
-ax.legend()
+sns.barplot(dat, x="method", y="corr", errorbar="se")
+
+# %% plot comparison results
+subset = np.arange(5)
+true_ds = open_minian(os.path.join(INT_PATH, "simulated"))
+temp_ds = xr.open_dataset(os.path.join(INT_PATH, "temp_res.nc"))
+plt_dat = pd.concat(
+    [
+        true_ds.isel(unit_id=subset)[["S"]].to_dataframe(),
+        temp_ds.isel(unit_id=subset)[["S_new", "S_bin_new", "YrA"]].to_dataframe(),
+    ]
+).reset_index()
+for c in plt_dat.columns:
+    plt_dat[c] = norm(plt_dat[c])
+plt_dat = plt_dat.melt(id_vars=["frame", "unit_id"])
+fig = px.line(plt_dat, facet_row="unit_id", x="frame", y="value", color="variable")
+fig.write_html("./new_method.html")
