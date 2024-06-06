@@ -3,6 +3,7 @@ import os
 import warnings
 
 import cvxpy as cp
+import Levenshtein
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -215,43 +216,73 @@ updt_ds = xr.merge(
 )
 updt_ds.to_netcdf(os.path.join(INT_PATH, "temp_res.nc"))
 
-# %% compute correlations
-true_ds = open_minian(os.path.join(INT_PATH, "simulated"))
-temp_ds = xr.open_dataset(os.path.join(INT_PATH, "temp_res.nc"))
-dist = np.diag(
-    cdist(
-        true_ds["S"].transpose("unit_id", "frame"),
-        temp_ds["S_new"].transpose("unit_id", "frame"),
-        metric="correlation",
-    )
-)
-dist_bin = np.diag(
-    cdist(
-        true_ds["S"].transpose("unit_id", "frame"),
-        temp_ds["S_bin_new"].transpose("unit_id", "frame"),
-        metric="correlation",
-    )
-)
-dat = pd.DataFrame(
-    {
-        "method": ["old"] * len(dist) + ["new"] * len(dist_bin),
-        "corr": np.concatenate([dist, dist_bin]),
-    }
-)
-fig, ax = plt.subplots()
-sns.barplot(dat, x="method", y="corr", errorbar="se")
 
-# %% plot comparison results
-true_ds = open_minian(os.path.join(INT_PATH, "simulated"))
+# %% plot example and metrics
+def compute_dist(trueS, newS, metric):
+    if metric == "edit":
+        dist = np.array(
+            [
+                Levenshtein.distance(
+                    np.array(trueS.sel(unit_id=uid)), np.array(newS.sel(unit_id=uid))
+                )
+                for uid in trueS.coords["unit_id"]
+            ]
+        )
+    else:
+        dist = np.diag(
+            cdist(
+                trueS.transpose("unit_id", "frame"),
+                newS.transpose("unit_id", "frame"),
+                metric=metric,
+            )
+        )
+    return pd.DataFrame(
+        {
+            "method": newS.name,
+            "metric": metric,
+            "unit_id": trueS.coords["unit_id"],
+            "dist": dist,
+        }
+    )
+
+
+def norm_per_cell(S):
+    return xr.apply_ufunc(
+        norm,
+        S.astype(float).compute(),
+        input_core_dims=[["frame"]],
+        output_core_dims=[["frame"]],
+        vectorize=True,
+    )
+
+
 temp_ds = xr.open_dataset(os.path.join(INT_PATH, "temp_res.nc"))
+true_ds = open_minian(os.path.join(INT_PATH, "simulated")).isel(
+    unit_id=temp_ds.coords["unit_id"]
+)
+Strue = true_ds["S"]
+Snew = temp_ds["S_new"]
+Smax = Snew.max()
+S_ls = [Snew.rename("real_val"), temp_ds["S_bin_new"].rename("bin")]
+for thres in np.linspace(0.1, 0.9, 9):
+    S_ls.append((Snew > Smax * thres).rename("thres-{:.1f}".format(thres)))
+corrs = pd.concat([compute_dist(Strue, ss, "correlation") for ss in S_ls])
+hammings = pd.concat([compute_dist(Strue, ss, "hamming") for ss in S_ls[1:]])
+edits = pd.concat([compute_dist(Strue, ss, "edit") for ss in S_ls[1:]])
+dat = pd.concat([corrs, hammings, edits], ignore_index=True)
+g = sns.FacetGrid(dat, row="metric", sharey=False, aspect=3, hue="method")
+g.map_dataframe(sns.barplot, x="method", y="dist", errorbar="se", saturation=0.6)
+g.map_dataframe(sns.swarmplot, x="method", y="dist", edgecolor="auto", linewidth=1)
+g.figure.savefig(
+    os.path.join(FIG_PATH, "bin_metrics.svg"), dpi=500, bbox_inches="tight"
+)
 plt_dat = pd.concat(
     [
-        true_ds.sel(unit_id=subset)[["S"]].to_dataframe(),
-        temp_ds.sel(unit_id=subset)[["S_new", "S_bin_new", "YrA"]].to_dataframe(),
+        norm_per_cell(S_true).rename("S_true").to_dataframe(),
+        norm_per_cell(temp_ds.sel(unit_id=subset)[["YrA"]]).to_dataframe(),
     ]
+    + [norm_per_cell(ss).to_dataframe() for ss in S_ls]
 ).reset_index()
-for c in ["S", "S_new", "S_bin_new", "YrA"]:
-    plt_dat[c] = norm(plt_dat[c])
 plt_dat = plt_dat.melt(id_vars=["frame", "unit_id"])
 fig = px.line(plt_dat, facet_row="unit_id", x="frame", y="value", color="variable")
-fig.write_html("./new_method.html")
+fig.write_html(os.path.join(FIG_PATH, "bin_example.html"))

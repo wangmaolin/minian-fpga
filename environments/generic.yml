@@ -32,3 +32,4 @@ dependencies:
   - pymetis
   - rechunker
   - natsort
+  - python-levenshtein
