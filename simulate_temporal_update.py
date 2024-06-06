@@ -46,8 +46,14 @@ Y, A, C, S, shifts = generate_data(
 )
 
 # %% temporal update
+subset = [0, 1, 3]
 minian_ds = open_minian(os.path.join(INT_PATH, "simulated"))
 Y, A, C_true, S_true = minian_ds["Y"], minian_ds["A"], minian_ds["C"], minian_ds["S"]
+A, C_true, S_true = (
+    A.sel(unit_id=subset),
+    C_true.sel(unit_id=subset),
+    S_true.sel(unit_id=subset),
+)
 b = rechunk_like(
     xr.DataArray(
         np.zeros((A.sizes["height"], A.sizes["width"])),
@@ -236,16 +242,15 @@ fig, ax = plt.subplots()
 sns.barplot(dat, x="method", y="corr", errorbar="se")
 
 # %% plot comparison results
-subset = np.arange(5)
 true_ds = open_minian(os.path.join(INT_PATH, "simulated"))
 temp_ds = xr.open_dataset(os.path.join(INT_PATH, "temp_res.nc"))
 plt_dat = pd.concat(
     [
-        true_ds.isel(unit_id=subset)[["S"]].to_dataframe(),
-        temp_ds.isel(unit_id=subset)[["S_new", "S_bin_new", "YrA"]].to_dataframe(),
+        true_ds.sel(unit_id=subset)[["S"]].to_dataframe(),
+        temp_ds.sel(unit_id=subset)[["S_new", "S_bin_new", "YrA"]].to_dataframe(),
     ]
 ).reset_index()
-for c in plt_dat.columns:
+for c in ["S", "S_new", "S_bin_new", "YrA"]:
     plt_dat[c] = norm(plt_dat[c])
 plt_dat = plt_dat.melt(id_vars=["frame", "unit_id"])
 fig = px.line(plt_dat, facet_row="unit_id", x="frame", y="value", color="variable")
