@@ -1,5 +1,6 @@
 # %% import and definition
 import os
+import warnings
 
 import cvxpy as cp
 import matplotlib.pyplot as plt
@@ -11,7 +12,7 @@ import xarray as xr
 from scipy.sparse import dia_matrix
 from scipy.spatial.distance import cdist
 
-from routine.cnmf import compute_trace, update_temporal_block, update_temporal_cvxpy
+from routine.cnmf import compute_trace, update_temporal_block
 from routine.minian_functions import open_minian
 from routine.simulation import generate_data
 from routine.utilities import norm, rechunk_like
@@ -74,7 +75,7 @@ YrA, gs, tns = update_temporal_block(
     return_param=True,
 )
 sps_penal = 10
-max_iters = 1000
+max_iters = 50
 C_new = []
 S_new = []
 b_new = []
@@ -108,7 +109,7 @@ for y, g, tn in zip(YrA, gs, tns):
     S_new.append(s.value)
     b_new.append(b.value)
     # bin prob
-    scale = 1
+    scale = np.ptp(s.value)
     niter = 0
     tol = 1e-6
     scale_vals = []
@@ -120,7 +121,7 @@ for y, g, tn in zip(YrA, gs, tns):
         s_bin = cp.Variable((T, 1))
         b_bin = cp.Variable()
         obj = cp.Minimize(
-            cp.norm(scale * y - c_bin - b_bin) + sps_penal * tn * cp.norm(s_bin)
+            cp.norm(y - scale * c_bin - b_bin) + sps_penal * tn * cp.norm(s_bin)
         )
         cons = [s_bin == G @ c_bin, c_bin >= 0, b_bin >= 0, s_bin >= 0, s_bin <= 1]
         prob = cp.Problem(obj, cons)
@@ -131,7 +132,7 @@ for y, g, tn in zip(YrA, gs, tns):
             s_thres = s_bin.value >= thres
             svals.append(s_thres)
             objvals.append(
-                np.linalg.norm(scale * y - G_inv @ s_thres - b_bin.value)
+                np.linalg.norm(y - scale * G_inv @ s_thres - b_bin.value)
                 # + sps_penal * tn * np.linalg.norm(s_thres, 1)
             )
         opt_idx = np.argmin(objvals)
@@ -145,12 +146,14 @@ for y, g, tn in zip(YrA, gs, tns):
         # )[0][0].squeeze()
         est = G_inv @ opt_s + b_bin.value
         idx = np.argmax(est)
-        scale_new = (est[idx] / y[idx]).item()
+        scale_new = (y[idx] / est[idx]).item()
         if np.abs(scale_new - scale) <= tol:
             break
         else:
             scale = scale_new
             niter += 1
+    else:
+        warnings.warn("max scale iteration reached")
     C_bin_new.append(G_inv @ opt_s)
     S_bin_new.append(opt_s)
     b_bin_new.append(b_bin.value)
