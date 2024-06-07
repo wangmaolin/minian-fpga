@@ -140,7 +140,8 @@ for y, g, tn in zip(YrA, gs, tns):
             s_thres = s_bin.value >= thres
             svals.append(s_thres)
             objvals.append(
-                np.linalg.norm(y - scale * G_inv @ s_thres - b_bin.value)
+                np.linalg.norm(y / scale - G_inv @ s_thres - b_bin.value / scale)
+                * scale
                 # + sps_penal * tn * np.linalg.norm(s_thres, 1)
             )
         opt_idx = np.argmin(objvals)
