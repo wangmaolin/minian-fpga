@@ -12,6 +12,7 @@ import seaborn as sns
 import xarray as xr
 from scipy.sparse import dia_matrix
 from scipy.spatial.distance import cdist
+from tqdm.auto import tqdm
 
 from routine.cnmf import compute_trace, update_temporal_block
 from routine.minian_functions import open_minian
@@ -91,7 +92,7 @@ C_bin_new = []
 S_bin_new = []
 b_bin_new = []
 scales = []
-for y, g, tn in zip(YrA, gs, tns):
+for y, g, tn in tqdm(zip(YrA, gs, tns), total=YrA.shape[0]):
     # parameters
     T = len(y)
     G = dia_matrix(
@@ -112,7 +113,7 @@ for y, g, tn in zip(YrA, gs, tns):
     obj = cp.Minimize(cp.norm(y - c - b) + sps_penal * tn * cp.norm(s))
     cons = [s == G @ c, c >= 0, s >= 0, b >= 0]
     prob = cp.Problem(obj, cons)
-    prob.solve(solver=cp.ECOS)
+    prob.solve()
     C_new.append(c.value)
     S_new.append(s.value)
     b_new.append(b.value)
@@ -133,7 +134,7 @@ for y, g, tn in zip(YrA, gs, tns):
         )
         cons = [s_bin == G @ c_bin, c_bin >= 0, b_bin >= 0, s_bin >= 0, s_bin <= 1]
         prob = cp.Problem(obj, cons)
-        prob.solve(solver=cp.ECOS)
+        prob.solve()
         svals = []
         objvals = []
         for thres in np.linspace(s_bin.value.min(), s_bin.value.max(), 1000):
@@ -278,7 +279,7 @@ g.map_dataframe(sns.violinplot, x="method", y="dist", saturation=0.6)
 g.figure.savefig(
     os.path.join(FIG_PATH, "bin_metrics.svg"), dpi=500, bbox_inches="tight"
 )
-nsamp = 10
+nsamp = min(10, len(subset))
 exp_set = np.random.choice(subset, nsamp, replace=False)
 plt_dat = pd.concat(
     [
