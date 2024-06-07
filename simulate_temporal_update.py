@@ -22,6 +22,7 @@ INT_PATH = "./intermediate/temporal_simulation"
 FIG_PATH = "./figs/temporal_simulation"
 
 os.makedirs(INT_PATH, exist_ok=True)
+os.makedirs(FIG_PATH, exist_ok=True)
 
 # %% generate data
 Y, A, C, S, shifts = generate_data(
@@ -47,8 +48,8 @@ Y, A, C, S, shifts = generate_data(
 )
 
 # %% temporal update
-subset = [0, 1, 3]
 minian_ds = open_minian(os.path.join(INT_PATH, "simulated"))
+subset = minian_ds.coords["unit_id"]
 Y, A, C_true, S_true = minian_ds["Y"], minian_ds["A"], minian_ds["C"], minian_ds["S"]
 A, C_true, S_true = (
     A.sel(unit_id=subset),
@@ -271,18 +272,21 @@ hammings = pd.concat([compute_dist(Strue, ss, "hamming") for ss in S_ls[1:]])
 edits = pd.concat([compute_dist(Strue, ss, "edit") for ss in S_ls[1:]])
 dat = pd.concat([corrs, hammings, edits], ignore_index=True)
 g = sns.FacetGrid(dat, row="metric", sharey=False, aspect=3, hue="method")
-g.map_dataframe(sns.barplot, x="method", y="dist", errorbar="se", saturation=0.6)
-g.map_dataframe(sns.swarmplot, x="method", y="dist", edgecolor="auto", linewidth=1)
+g.map_dataframe(sns.violinplot, x="method", y="dist", saturation=0.6)
+# g.map_dataframe(sns.swarmplot, x="method", y="dist", edgecolor="auto", linewidth=1)
 g.figure.savefig(
     os.path.join(FIG_PATH, "bin_metrics.svg"), dpi=500, bbox_inches="tight"
 )
+nsamp = 10
+exp_set = np.random.choice(subset, nsamp, replace=False)
 plt_dat = pd.concat(
     [
-        norm_per_cell(S_true).rename("S_true").to_dataframe(),
-        norm_per_cell(temp_ds.sel(unit_id=subset)[["YrA"]]).to_dataframe(),
+        norm_per_cell(S_true.sel(unit_id=exp_set)).rename("S_true").to_dataframe(),
+        norm_per_cell(temp_ds.sel(unit_id=exp_set)[["YrA"]]).to_dataframe(),
     ]
-    + [norm_per_cell(ss).to_dataframe() for ss in S_ls]
+    + [norm_per_cell(ss.sel(unit_id=exp_set)).to_dataframe() for ss in S_ls]
 ).reset_index()
 plt_dat = plt_dat.melt(id_vars=["frame", "unit_id"])
 fig = px.line(plt_dat, facet_row="unit_id", x="frame", y="value", color="variable")
+fig.update_layout(height=nsamp * 150)
 fig.write_html(os.path.join(FIG_PATH, "bin_example.html"))
