@@ -23,6 +23,7 @@ dependencies:
   - netcdf4
   - pyarrow
   - seaborn
+  - matplotlib
   - statsmodels
   - scikit-learn
   - colorcet

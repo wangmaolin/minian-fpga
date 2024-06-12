@@ -274,7 +274,9 @@ hammings = pd.concat([compute_dist(Strue, ss, "hamming") for ss in S_ls[1:]])
 edits = pd.concat([compute_dist(Strue, ss, "edit") for ss in S_ls[1:]])
 dat = pd.concat([corrs, hammings, edits], ignore_index=True)
 g = sns.FacetGrid(dat, row="metric", sharey=False, aspect=3, hue="method")
-g.map_dataframe(sns.violinplot, x="method", y="dist", saturation=0.6)
+g.map_dataframe(
+    sns.violinplot, x="method", y="dist", bw_adjust=0.5, cut=0.3, saturation=0.6
+)
 # g.map_dataframe(sns.swarmplot, x="method", y="dist", edgecolor="auto", linewidth=1)
 g.figure.savefig(
     os.path.join(FIG_PATH, "bin_metrics.svg"), dpi=500, bbox_inches="tight"
