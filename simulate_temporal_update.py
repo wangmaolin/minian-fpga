@@ -26,9 +26,10 @@ os.makedirs(INT_PATH, exist_ok=True)
 os.makedirs(FIG_PATH, exist_ok=True)
 
 # %% generate data
-Y, A, C, S, shifts = generate_data(
+Y, A, C, S, shifts, C_true, S_true = generate_data(
     dpath=INT_PATH,
     ncell=100,
+    upsample=10,
     dims={"height": 256, "width": 256, "frame": 2000},
     sig_scale=1,
     sz_mean=3,
@@ -49,7 +50,7 @@ Y, A, C, S, shifts = generate_data(
 )
 
 # %% temporal update
-minian_ds = open_minian(os.path.join(INT_PATH, "simulated"))
+minian_ds = open_minian(os.path.join(INT_PATH, "simulated"), return_dict=True)
 subset = minian_ds.coords["unit_id"]
 Y, A, C_true, S_true = minian_ds["Y"], minian_ds["A"], minian_ds["C"], minian_ds["S"]
 A, C_true, S_true = (

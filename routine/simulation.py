@@ -126,6 +126,7 @@ def simulate_data(
     cent=None,
     zero_thres=1e-8,
     chk_size=1000,
+    upsample: int = 1,
 ):
     ff, hh, ww = (
         dims["frame"],
@@ -164,9 +165,38 @@ def simulate_data(
     A = darr.from_array(
         sparse.COO.from_numpy(np.where(A > zero_thres, A, 0)), chunks=-1
     )
-    traces = [exp_trace(ff, tmp_pfire, tmp_tau_d, tmp_tau_r) for _ in range(len(cent))]
-    C = darr.from_array(np.stack([t[0] for t in traces]).T, chunks=(chk_size, -1))
-    S = darr.from_array(np.stack([t[1] for t in traces]).T, chunks=(chk_size, -1))
+    traces = [
+        exp_trace(ff * upsample, tmp_pfire, tmp_tau_d * upsample, tmp_tau_r * upsample)
+        for _ in range(len(cent))
+    ]
+    if upsample > 1:
+        C_true = darr.from_array(
+            np.stack([t[0] for t in traces]).T, chunks=(chk_size, -1)
+        )
+        S_true = darr.from_array(
+            np.stack([t[1] for t in traces]).T, chunks=(chk_size, -1)
+        )
+        C = darr.from_array(
+            np.stack(
+                [
+                    np.convolve(t[0], np.ones(upsample), "valid")[::upsample]
+                    for t in traces
+                ]
+            ).T,
+            chunks=(chk_size, -1),
+        )
+        S = darr.from_array(
+            np.stack(
+                [
+                    np.convolve(t[1], np.ones(upsample), "valid")[::upsample]
+                    for t in traces
+                ]
+            ).T,
+            chunks=(chk_size, -1),
+        )
+    else:
+        C = darr.from_array(np.stack([t[0] for t in traces]).T, chunks=(chk_size, -1))
+        S = darr.from_array(np.stack([t[1] for t in traces]).T, chunks=(chk_size, -1))
     cent_bg = np.stack(
         [
             np.random.randint(pad, pad + hh, size=bg_nsrc),
@@ -220,7 +250,12 @@ def simulate_data(
     if pad > 0:
         Y = Y[:, pad:-pad, pad:-pad]
         A = A[:, pad:-pad, pad:-pad]
-    uids, hs, ws, fs = np.arange(ncell), np.arange(hh), np.arange(ww), np.arange(ff)
+    uids, hs, ws = np.arange(ncell), np.arange(hh), np.arange(ww)
+    if upsample > 1:
+        fs_true = np.arange(ff * upsample)
+        fs = fs_true[int(upsample / 2) : min(-int(upsample / 2) + 1, -1) : upsample]
+    else:
+        fs = np.arange(ff)
     Y = xr.DataArray(
         Y,
         dims=["frame", "height", "width"],
@@ -239,15 +274,30 @@ def simulate_data(
     S = xr.DataArray(
         S, dims=["frame", "unit_id"], coords={"unit_id": uids, "frame": fs}, name="S"
     )
-    return Y, A, C, S, shifts
+    if upsample > 1:
+        C_true = xr.DataArray(
+            C_true,
+            dims=["frame", "unit_id"],
+            coords={"unit_id": uids, "frame": fs_true},
+            name="C_true",
+        )
+        S_true = xr.DataArray(
+            S_true,
+            dims=["frame", "unit_id"],
+            coords={"unit_id": uids, "frame": fs_true},
+            name="S_true",
+        )
+        return Y, A, C, S, C_true, S_true, shifts
+    else:
+        return Y, A, C, S, shifts
 
 
 def generate_data(dpath, save_Y=False, **kwargs):
-    Y, A, C, S, shifts = simulate_data(**kwargs)
-    datls = [A, C, S, shifts]
-    if save_Y:
-        datls.append(Y)
-    for dat in datls:
+    dat_vars = simulate_data(**kwargs)
+    Y = dat_vars[0]
+    if not save_Y:
+        dat_vars = dat_vars[1:]
+    for dat in dat_vars:
         save_minian(dat, dpath=os.path.join(dpath, "simulated"), overwrite=True)
     write_video(
         Y,
@@ -257,7 +307,7 @@ def generate_data(dpath, save_Y=False, **kwargs):
         options={"r": "60", "pix_fmt": "gray", "vcodec": "ffv1"},
         chunked=True,
     )
-    return Y, A, C, S, shifts
+    return tuple(dat_vars)
 
 
 def computeY(A, C, A_bg, C_bg, shifts, sig_scale, noise_scale, post_offset, post_gain):
