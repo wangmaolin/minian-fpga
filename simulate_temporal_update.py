@@ -117,6 +117,14 @@ for y, g, tn in tqdm(zip(YrA, gs, tns), total=YrA.shape[0]):
     C_new.append(c.value)
     S_new.append(s.value)
     b_new.append(b.value)
+    # no sparse prob
+    # c_org = cp.Variable((T, 1))
+    # s_org = cp.Variable((T, 1))
+    # b_org = cp.Variable()
+    # obj_org = cp.Minimize(cp.norm(y - c_org - b_org))
+    # cons_org = [s_org == G @ c_org, c_org >= 0, s_org >= 0, b_org >= 0]
+    # prob_org = cp.Problem(obj_org, cons_org)
+    # prob_org.solve()
     # bin prob
     scale = np.ptp(s.value)
     niter = 0
@@ -130,7 +138,7 @@ for y, g, tn in tqdm(zip(YrA, gs, tns), total=YrA.shape[0]):
         s_bin = cp.Variable((T, 1))
         b_bin = cp.Variable()
         obj = cp.Minimize(
-            cp.norm(y - scale * c_bin - b_bin) + sps_penal * tn * cp.norm(s_bin)
+            cp.norm(y - scale * c_bin - b_bin)  # + sps_penal * tn * cp.norm(s_bin)
         )
         cons = [s_bin == G @ c_bin, c_bin >= 0, b_bin >= 0, s_bin >= 0, s_bin <= 1]
         prob = cp.Problem(obj, cons)
