@@ -3,6 +3,7 @@ import itertools as itt
 import os
 import warnings
 
+import cv2
 import cvxpy as cp
 import Levenshtein
 import matplotlib.pyplot as plt
@@ -243,7 +244,29 @@ updt_ds.to_netcdf(os.path.join(INT_PATH, "temp_res.nc"))
 
 
 # %% plot example and metrics
-def compute_dist(trueS, newS, metric):
+def dilate1d(a, kernel):
+    return cv2.dilate(a.astype(float), kernel).squeeze()
+
+
+def compute_dist(trueS, newS, metric, corr_dilation=1):
+    if metric == "correlation" and corr_dilation:
+        kn = np.ones(2 * corr_dilation + 1)
+        trueS = xr.apply_ufunc(
+            dilate1d,
+            trueS.compute(),
+            input_core_dims=[["frame"]],
+            output_core_dims=[["frame"]],
+            vectorize=True,
+            kwargs={"kernel": kn},
+        )
+        newS = xr.apply_ufunc(
+            dilate1d,
+            newS.compute(),
+            input_core_dims=[["frame"]],
+            output_core_dims=[["frame"]],
+            vectorize=True,
+            kwargs={"kernel": kn},
+        )
     if metric == "edit":
         dist = np.array(
             [
