@@ -1,4 +1,5 @@
 # %% import and definition
+import itertools as itt
 import os
 import warnings
 
@@ -221,9 +222,19 @@ def compute_dist(trueS, newS, metric):
                 metric=metric,
             )
         )
+    Sname = newS.name.split("-")
+    if "org" in Sname:
+        mthd = "original"
+        Sname.remove("org")
+    elif "upsamp" in newS.name:
+        mthd = "upsampled"
+        Sname.remove("upsamp")
+    else:
+        mthd = "unknown"
     return pd.DataFrame(
         {
-            "method": newS.name,
+            "variable": "-".join(Sname),
+            "method": mthd,
             "metric": metric,
             "unit_id": trueS.coords["unit_id"],
             "dist": dist,
@@ -241,38 +252,77 @@ def norm_per_cell(S):
     )
 
 
-temp_ds = xr.open_dataset(os.path.join(INT_PATH, "temp_res.nc"))
+def compute_metrics(S, S_true, mets, nthres: int = None):
+    S, S_true = S.dropna("frame"), S_true.dropna("frame")
+    if nthres is not None:
+        S_ls = thresS(S, nthres)
+    else:
+        S_ls = [S]
+    res_ls = [compute_dist(S_true, curS, met) for curS, met in itt.product(S_ls, mets)]
+    return pd.concat(res_ls)
+
+
+def thresS(S, nthres):
+    Smax = S.max()
+    S_ls = [
+        (S > Smax * th).rename(S.name + "-th_{:.1f}".format(th))
+        for th in np.linspace(0.1, 0.9, nthres)
+    ]
+    return S_ls
+
+
+updt_ds = xr.open_dataset(os.path.join(INT_PATH, "temp_res.nc"))
 true_ds = open_minian(os.path.join(INT_PATH, "simulated")).isel(
-    unit_id=temp_ds.coords["unit_id"]
+    unit_id=updt_ds.coords["unit_id"]
 )
-Strue = true_ds["S"]
-Snew = temp_ds["S_new"]
-Smax = Snew.max()
-S_ls = [Snew.rename("real_val"), temp_ds["S_bin_new"].rename("bin")]
-for thres in np.linspace(0.1, 0.9, 9):
-    S_ls.append((Snew > Smax * thres).rename("thres-{:.1f}".format(thres)))
-corrs = pd.concat([compute_dist(Strue, ss, "correlation") for ss in S_ls])
-hammings = pd.concat([compute_dist(Strue, ss, "hamming") for ss in S_ls[1:]])
-edits = pd.concat([compute_dist(Strue, ss, "edit") for ss in S_ls[1:]])
-dat = pd.concat([corrs, hammings, edits], ignore_index=True)
-g = sns.FacetGrid(dat, row="metric", sharey=False, aspect=3, hue="method")
+
+S_gt, S_gt_true = true_ds["S"].dropna("frame", how="all"), true_ds["S_true"]
+S_org, S_bin_org, S_up, S_bin_up, YrA, YrA_up = (
+    updt_ds["S-org"].dropna("frame", how="all"),
+    updt_ds["S-bin-org"].dropna("frame", how="all"),
+    updt_ds["S-upsamp"],
+    updt_ds["S-bin-upsamp"],
+    updt_ds["YrA"].dropna("frame", how="all"),
+    updt_ds["YrA_interp"],
+)
+met_ds = [
+    (S_org, S_gt, {"mets": ["correlation"]}),
+    (S_org, S_gt, {"mets": ["hamming", "edit"], "nthres": 9}),
+    (S_bin_org, S_gt, {"mets": ["correlation", "hamming", "edit"]}),
+    (S_up, S_gt_true, {"mets": ["correlation"]}),
+    (S_up, S_gt_true, {"mets": ["hamming", "edit"], "nthres": 9}),
+    (S_bin_up, S_gt_true, {"mets": ["correlation", "hamming", "edit"]}),
+]
+met_res = pd.concat(
+    [compute_metrics(m[0], m[1], **m[2]) for m in met_ds], ignore_index=True
+)
+g = sns.FacetGrid(
+    met_res,
+    row="metric",
+    col="method",
+    sharey="row",
+    sharex="col",
+    aspect=2,
+    hue="variable",
+    margin_titles=True,
+)
 g.map_dataframe(
-    sns.violinplot, x="method", y="dist", bw_adjust=0.5, cut=0.3, saturation=0.6
+    sns.violinplot, x="variable", y="dist", bw_adjust=0.5, cut=0.3, saturation=0.6
 )
-# g.map_dataframe(sns.swarmplot, x="method", y="dist", edgecolor="auto", linewidth=1)
-g.figure.savefig(
-    os.path.join(FIG_PATH, "bin_metrics.svg"), dpi=500, bbox_inches="tight"
-)
+g.map_dataframe(sns.swarmplot, x="variable", y="dist", edgecolor="auto", linewidth=1)
+g.tick_params(axis="x", rotation=90)
+g.figure.savefig(os.path.join(FIG_PATH, "metrics.svg"), dpi=500, bbox_inches="tight")
 nsamp = min(10, len(subset))
 exp_set = np.random.choice(subset, nsamp, replace=False)
-plt_dat = pd.concat(
-    [
-        norm_per_cell(S_gt.sel(unit_id=exp_set)).rename("S_true").to_dataframe(),
-        norm_per_cell(temp_ds.sel(unit_id=exp_set)[["YrA"]]).to_dataframe(),
-    ]
-    + [norm_per_cell(ss.sel(unit_id=exp_set)).to_dataframe() for ss in S_ls]
-).reset_index()
-plt_dat = plt_dat.melt(id_vars=["frame", "unit_id"])
-fig = px.line(plt_dat, facet_row="unit_id", x="frame", y="value", color="variable")
-fig.update_layout(height=nsamp * 150)
-fig.write_html(os.path.join(FIG_PATH, "bin_example.html"))
+fig_dict = {
+    "exp_original": [S_gt, YrA, S_org, S_bin_org] + thresS(S_org, 9),
+    # "exp_upsamp": [S_gt_true, YrA_interp, S_up, S_bin_up] + thresS(S_up, 9),
+}
+for figname, plt_trs in fig_dict.items():
+    plt_dat = pd.concat(
+        [norm_per_cell(tr.sel(unit_id=exp_set)).to_dataframe() for tr in plt_trs]
+    ).reset_index()
+    plt_dat = plt_dat.melt(id_vars=["frame", "unit_id"])
+    fig = px.line(plt_dat, facet_row="unit_id", x="frame", y="value", color="variable")
+    fig.update_layout(height=nsamp * 150)
+    fig.write_html(os.path.join(FIG_PATH, "{}.html".format(figname)))
