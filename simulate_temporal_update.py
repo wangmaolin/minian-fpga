@@ -124,14 +124,6 @@ for up_type, cur_YrA in {"org": YrA, "upsamp": YrA_interp}.items():
         res["C"].append(c.value)
         res["S"].append(s.value)
         res["b"].append(b.value)
-        # no sparse prob
-        # c_org = cp.Variable((T, 1))
-        # s_org = cp.Variable((T, 1))
-        # b_org = cp.Variable()
-        # obj_org = cp.Minimize(cp.norm(y - c_org - b_org))
-        # cons_org = [s_org == G @ c_org, c_org >= 0, s_org >= 0, b_org >= 0]
-        # prob_org = cp.Problem(obj_org, cons_org)
-        # prob_org.solve()
         # bin prob
         scale = np.ptp(s.value)
         niter = 0
