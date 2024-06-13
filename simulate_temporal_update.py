@@ -85,7 +85,7 @@ YrA = compute_trace(Y, A, b, C_gt, f).compute()
 YrA_interp = YrA.interp(
     {"frame": C_gt_true.coords["frame"]}, kwargs={"fill_value": "extrapolate"}
 )
-updt_ds = []
+updt_ds = [YrA.rename("YrA"), YrA_interp.rename("YrA_interp")]
 for up_type, cur_YrA in {"org": YrA, "upsamp": YrA_interp}.items():
     cur_YrA_ps, gs, tns = update_temporal_block(
         np.array(cur_YrA),
