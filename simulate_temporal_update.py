@@ -101,7 +101,9 @@ for up_type, cur_YrA in {"org": YrA, "upsamp": YrA_interp}.items():
     sps_penal = 10
     max_iters = 50
     res = {"C": [], "S": [], "b": [], "C-bin": [], "S-bin": [], "b-bin": [], "scal": []}
-    for y, g, tn in tqdm(zip(cur_YrA_ps, gs, tns), total=cur_YrA_ps.shape[0]):
+    for y, g, tn in tqdm(
+        zip(np.array(cur_YrA), gs, tns), total=np.array(cur_YrA).shape[0]
+    ):
         # parameters
         T = len(y)
         G = dia_matrix(
