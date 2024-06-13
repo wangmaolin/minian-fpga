@@ -36,7 +36,7 @@ Y, A, C, S, shifts, C_gt, S_gt = generate_data(
     sz_mean=3,
     sz_sigma=0.6,
     sz_min=0.1,
-    tmp_pfire=0.01,
+    tmp_pfire=0.003,
     tmp_tau_d=6,
     tmp_tau_r=1,
     bg_nsrc=0,
@@ -91,7 +91,8 @@ for up_type, cur_YrA in {"org": YrA, "upsamp": YrA_interp}.items():
     cur_YrA_ps, gs, tns = update_temporal_block(
         np.array(cur_YrA),
         noise_freq=0.1,
-        p=1,
+        p=2,
+        add_lag=100,
         sparse_penal=0.1,
         max_iters=1000,
         zero_thres=1e-9,
