@@ -140,10 +140,11 @@ for up_type, cur_YrA in {"org": YrA, "upsamp": YrA_interp}.items():
         scale = np.ptp(s_init.value)
         niter = 0
         tol = 1e-6
-        scale_vals = []
-        opt_s_vals = []
-        opt_obj_vals = []
-        opt_lb_vals = []
+        scale_df = []
+        s_bin_df = []
+        opt_s_df = []
+        obj_df = []
+        lb_df = []
         while niter < max_iters:
             c_bin = cp.Variable((T, 1))
             s_bin = cp.Variable((T, 1))
@@ -166,16 +167,23 @@ for up_type, cur_YrA in {"org": YrA, "upsamp": YrA_interp}.items():
                 )
             opt_idx = np.argmin(objvals)
             opt_s = svals[opt_idx]
-            scale_vals.append(scale)
-            opt_s_vals.append(opt_s)
-            opt_obj_vals.append(objvals[opt_idx])
-            opt_lb_vals.append(prob.value)
-            # scale_new = np.linalg.lstsq(
-            #     y.reshape((-1, 1)), np.array(G_inv @ opt_s + b_bin.value).squeeze()
-            # )[0][0].squeeze()
-            est = G_inv @ opt_s + b_bin.value
-            idx = np.argmax(est)
-            scale_new = (y[idx] / est[idx]).item()
+            scale_df.append(pd.DataFrame([{"scale": scale, "iter": niter}]))
+            s_bin_df.append(
+                pd.DataFrame(
+                    {
+                        "s_bin": s_bin.value.squeeze(),
+                        "frame": np.arange(T),
+                        "iter": niter,
+                    }
+                )
+            )
+            opt_s_df.append(
+                pd.DataFrame(
+                    {"opt_s": opt_s.squeeze(), "frame": np.arange(T), "iter": niter}
+                )
+            )
+            obj_df.append(pd.DataFrame([{"obj": objvals[opt_idx], "iter": niter}]))
+            lb_df.append(pd.DataFrame([{"lb": prob.value, "iter": niter}]))
             if np.abs(scale_new - scale) <= tol:
                 break
             else:
@@ -183,6 +191,19 @@ for up_type, cur_YrA in {"org": YrA, "upsamp": YrA_interp}.items():
                 niter += 1
         else:
             warnings.warn("max scale iteration reached")
+        scale_df = pd.concat(scale_df, ignore_index=True)
+        s_bin_df = pd.concat(
+            s_bin_df
+            + [
+                pd.DataFrame(
+                    {"s_bin": s.value.squeeze(), "frame": np.arange(T), "iter": -1}
+                )
+            ],
+            ignore_index=True,
+        )
+        opt_s_df = pd.concat(opt_s_df, ignore_index=True)
+        obj_df = pd.concat(obj_df, ignore_index=True)
+        lb_df = pd.concat(lb_df, ignore_index=True)
         res["C-bin"].append(G_inv @ opt_s)
         res["S-bin"].append(opt_s)
         res["b-bin"].append(b_bin.value)
