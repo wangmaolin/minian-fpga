@@ -26,7 +26,7 @@ os.makedirs(INT_PATH, exist_ok=True)
 os.makedirs(FIG_PATH, exist_ok=True)
 
 # %% generate data
-Y, A, C, S, shifts, C_true, S_true = generate_data(
+Y, A, C, S, shifts, C_gt, S_gt = generate_data(
     dpath=INT_PATH,
     ncell=100,
     upsample=10,
@@ -51,12 +51,19 @@ Y, A, C, S, shifts, C_true, S_true = generate_data(
 
 # %% temporal update
 minian_ds = open_minian(os.path.join(INT_PATH, "simulated"), return_dict=True)
-subset = minian_ds.coords["unit_id"]
-Y, A, C_true, S_true = minian_ds["Y"], minian_ds["A"], minian_ds["C"], minian_ds["S"]
-A, C_true, S_true = (
+subset = minian_ds["A"].coords["unit_id"][:5]
+Y, A, C_gt, S_gt, C_gt_true, S_gt_true = (
+    minian_ds["Y"],
+    minian_ds["A"],
+    minian_ds["C"],
+    minian_ds["S"],
+    minian_ds["C_true"],
+    minian_ds["S_true"],
+)
+A, C_gt, S_gt = (
     A.sel(unit_id=subset),
-    C_true.sel(unit_id=subset),
-    S_true.sel(unit_id=subset),
+    C_gt.sel(unit_id=subset),
+    S_gt.sel(unit_id=subset),
 )
 b = rechunk_like(
     xr.DataArray(
@@ -72,160 +79,134 @@ f = rechunk_like(
         dims=["frame"],
         coords={"frame": Y.coords["frame"]},
     ),
-    C_true,
+    C_gt,
 )
-YrA_tr = compute_trace(Y, A, b, C_true, f).compute()
-YrA, gs, tns = update_temporal_block(
-    np.array(YrA_tr),
-    noise_freq=0.1,
-    p=1,
-    sparse_penal=0.1,
-    max_iters=1000,
-    zero_thres=1e-9,
-    return_param=True,
+YrA = compute_trace(Y, A, b, C_gt, f).compute()
+YrA_interp = YrA.interp(
+    {"frame": C_gt_true.coords["frame"]}, kwargs={"fill_value": "extrapolate"}
 )
-sps_penal = 10
-max_iters = 50
-C_new = []
-S_new = []
-b_new = []
-C_bin_new = []
-S_bin_new = []
-b_bin_new = []
-scales = []
-for y, g, tn in tqdm(zip(YrA, gs, tns), total=YrA.shape[0]):
-    # parameters
-    T = len(y)
-    G = dia_matrix(
-        (
-            np.tile(np.concatenate(([1], -g)), (T, 1)).T,
-            -np.arange(len(g) + 1),
-        ),
-        shape=(T, T),
-    ).todense()
-    y = y - y.min()
-    y = y / y.max()
-    y = y.reshape((-1, 1))
-    G_inv = np.linalg.inv(G)
-    # org prob
-    c = cp.Variable((T, 1))
-    s = cp.Variable((T, 1))
-    b = cp.Variable()
-    obj = cp.Minimize(cp.norm(y - c - b) + sps_penal * tn * cp.norm(s))
-    cons = [s == G @ c, c >= 0, s >= 0, b >= 0]
-    prob = cp.Problem(obj, cons)
-    prob.solve()
-    C_new.append(c.value)
-    S_new.append(s.value)
-    b_new.append(b.value)
-    # no sparse prob
-    # c_org = cp.Variable((T, 1))
-    # s_org = cp.Variable((T, 1))
-    # b_org = cp.Variable()
-    # obj_org = cp.Minimize(cp.norm(y - c_org - b_org))
-    # cons_org = [s_org == G @ c_org, c_org >= 0, s_org >= 0, b_org >= 0]
-    # prob_org = cp.Problem(obj_org, cons_org)
-    # prob_org.solve()
-    # bin prob
-    scale = np.ptp(s.value)
-    niter = 0
-    tol = 1e-6
-    scale_vals = []
-    opt_s_vals = []
-    opt_obj_vals = []
-    opt_lb_vals = []
-    while niter < max_iters:
-        c_bin = cp.Variable((T, 1))
-        s_bin = cp.Variable((T, 1))
-        b_bin = cp.Variable()
-        obj = cp.Minimize(
-            cp.norm(y - scale * c_bin - b_bin)  # + sps_penal * tn * cp.norm(s_bin)
-        )
-        cons = [s_bin == G @ c_bin, c_bin >= 0, b_bin >= 0, s_bin >= 0, s_bin <= 1]
+updt_ds = []
+for up_type, cur_YrA in {"org": YrA, "upsamp": YrA_interp}.items():
+    cur_YrA_ps, gs, tns = update_temporal_block(
+        np.array(cur_YrA),
+        noise_freq=0.1,
+        p=1,
+        sparse_penal=0.1,
+        max_iters=1000,
+        zero_thres=1e-9,
+        return_param=True,
+    )
+    sps_penal = 10
+    max_iters = 50
+    res = {"C": [], "S": [], "b": [], "C-bin": [], "S-bin": [], "b-bin": [], "scal": []}
+    for y, g, tn in tqdm(zip(cur_YrA_ps, gs, tns), total=cur_YrA_ps.shape[0]):
+        # parameters
+        T = len(y)
+        G = dia_matrix(
+            (
+                np.tile(np.concatenate(([1], -g)), (T, 1)).T,
+                -np.arange(len(g) + 1),
+            ),
+            shape=(T, T),
+        ).todense()
+        y = y - y.min()
+        y = y / y.max()
+        y = y.reshape((-1, 1))
+        G_inv = np.linalg.inv(G)
+        # org prob
+        c = cp.Variable((T, 1))
+        s = cp.Variable((T, 1))
+        b = cp.Variable()
+        obj = cp.Minimize(cp.norm(y - c - b) + sps_penal * tn * cp.norm(s))
+        cons = [s == G @ c, c >= 0, s >= 0, b >= 0]
         prob = cp.Problem(obj, cons)
         prob.solve()
-        svals = []
-        objvals = []
-        for thres in np.linspace(s_bin.value.min(), s_bin.value.max(), 1000):
-            s_thres = s_bin.value >= thres
-            svals.append(s_thres)
-            objvals.append(
-                np.linalg.norm(y / scale - G_inv @ s_thres - b_bin.value / scale)
-                * scale
-                # + sps_penal * tn * np.linalg.norm(s_thres, 1)
+        res["C"].append(c.value)
+        res["S"].append(s.value)
+        res["b"].append(b.value)
+        # no sparse prob
+        # c_org = cp.Variable((T, 1))
+        # s_org = cp.Variable((T, 1))
+        # b_org = cp.Variable()
+        # obj_org = cp.Minimize(cp.norm(y - c_org - b_org))
+        # cons_org = [s_org == G @ c_org, c_org >= 0, s_org >= 0, b_org >= 0]
+        # prob_org = cp.Problem(obj_org, cons_org)
+        # prob_org.solve()
+        # bin prob
+        scale = np.ptp(s.value)
+        niter = 0
+        tol = 1e-6
+        scale_vals = []
+        opt_s_vals = []
+        opt_obj_vals = []
+        opt_lb_vals = []
+        while niter < max_iters:
+            c_bin = cp.Variable((T, 1))
+            s_bin = cp.Variable((T, 1))
+            b_bin = cp.Variable()
+            obj = cp.Minimize(
+                cp.norm(y - scale * c_bin - b_bin)  # + sps_penal * tn * cp.norm(s_bin)
             )
-        opt_idx = np.argmin(objvals)
-        opt_s = svals[opt_idx]
-        scale_vals.append(scale)
-        opt_s_vals.append(opt_s)
-        opt_obj_vals.append(objvals[opt_idx])
-        opt_lb_vals.append(prob.value)
-        # scale_new = np.linalg.lstsq(
-        #     y.reshape((-1, 1)), np.array(G_inv @ opt_s + b_bin.value).squeeze()
-        # )[0][0].squeeze()
-        est = G_inv @ opt_s + b_bin.value
-        idx = np.argmax(est)
-        scale_new = (y[idx] / est[idx]).item()
-        if np.abs(scale_new - scale) <= tol:
-            break
+            cons = [s_bin == G @ c_bin, c_bin >= 0, b_bin >= 0, s_bin >= 0, s_bin <= 1]
+            prob = cp.Problem(obj, cons)
+            prob.solve()
+            svals = []
+            objvals = []
+            for thres in np.linspace(s_bin.value.min(), s_bin.value.max(), 1000):
+                s_thres = s_bin.value >= thres
+                svals.append(s_thres)
+                objvals.append(
+                    np.linalg.norm(y / scale - G_inv @ s_thres - b_bin.value / scale)
+                    * scale
+                    # + sps_penal * tn * np.linalg.norm(s_thres, 1)
+                )
+            opt_idx = np.argmin(objvals)
+            opt_s = svals[opt_idx]
+            scale_vals.append(scale)
+            opt_s_vals.append(opt_s)
+            opt_obj_vals.append(objvals[opt_idx])
+            opt_lb_vals.append(prob.value)
+            # scale_new = np.linalg.lstsq(
+            #     y.reshape((-1, 1)), np.array(G_inv @ opt_s + b_bin.value).squeeze()
+            # )[0][0].squeeze()
+            est = G_inv @ opt_s + b_bin.value
+            idx = np.argmax(est)
+            scale_new = (y[idx] / est[idx]).item()
+            if np.abs(scale_new - scale) <= tol:
+                break
+            else:
+                scale = scale_new
+                niter += 1
         else:
-            scale = scale_new
-            niter += 1
-    else:
-        warnings.warn("max scale iteration reached")
-    C_bin_new.append(G_inv @ opt_s)
-    S_bin_new.append(opt_s)
-    b_bin_new.append(b_bin.value)
-    scales.append(scale)
-# save variables
-C_new = xr.DataArray(
-    np.concatenate(C_new, axis=1), dims=C_true.dims, coords=C_true.coords, name="C_new"
-)
-S_new = xr.DataArray(
-    np.concatenate(S_new, axis=1), dims=S_true.dims, coords=S_true.coords, name="S_new"
-)
-b_new = xr.DataArray(
-    np.array(b_new),
-    dims="unit_id",
-    coords={"unit_id": C_true.coords["unit_id"]},
-    name="b_new",
-)
-C_bin_new = xr.DataArray(
-    np.concatenate(C_bin_new, axis=1),
-    dims=C_true.dims,
-    coords=C_true.coords,
-    name="C_bin_new",
-)
-S_bin_new = xr.DataArray(
-    np.concatenate(S_bin_new, axis=1),
-    dims=S_true.dims,
-    coords=S_true.coords,
-    name="S_bin_new",
-)
-b_bin_new = xr.DataArray(
-    np.array(b_bin_new),
-    dims="unit_id",
-    coords={"unit_id": C_true.coords["unit_id"]},
-    name="b_bin_new",
-)
-scales = xr.DataArray(
-    np.array(scales),
-    dims="unit_id",
-    coords={"unit_id": C_true.coords["unit_id"]},
-    name="scales",
-)
-updt_ds = xr.merge(
-    [
-        C_new.rename("C_new"),
-        S_new.rename("S_new"),
-        b_new.rename("b_new"),
-        C_bin_new.rename("C_bin_new"),
-        S_bin_new.rename("S_bin_new"),
-        b_bin_new.rename("b_bin_new"),
-        scales.rename("scales"),
-        YrA_tr.rename("YrA"),
-    ]
-)
+            warnings.warn("max scale iteration reached")
+        res["C-bin"].append(G_inv @ opt_s)
+        res["S-bin"].append(opt_s)
+        res["b-bin"].append(b_bin.value)
+        res["scal"].append(scale)
+    # save variables
+    for vname, dat in res.items():
+        if vname.startswith("b") or vname.startswith("scal"):
+            updt_ds.append(
+                xr.DataArray(
+                    np.array(dat),
+                    dims="unit_id",
+                    coords={"unit_id": A.coords["unit_id"]},
+                    name="-".join([vname, up_type]),
+                )
+            )
+        else:
+            updt_ds.append(
+                xr.DataArray(
+                    np.concatenate(dat, axis=1),
+                    dims=["frame", "unit_id"],
+                    coords={
+                        "frame": cur_YrA.coords["frame"],
+                        "unit_id": A.coords["unit_id"],
+                    },
+                    name="-".join([vname, up_type]),
+                )
+            )
+updt_ds = xr.merge(updt_ds)
 updt_ds.to_netcdf(os.path.join(INT_PATH, "temp_res.nc"))
 
 
@@ -294,7 +275,7 @@ nsamp = min(10, len(subset))
 exp_set = np.random.choice(subset, nsamp, replace=False)
 plt_dat = pd.concat(
     [
-        norm_per_cell(S_true.sel(unit_id=exp_set)).rename("S_true").to_dataframe(),
+        norm_per_cell(S_gt.sel(unit_id=exp_set)).rename("S_true").to_dataframe(),
         norm_per_cell(temp_ds.sel(unit_id=exp_set)[["YrA"]]).to_dataframe(),
     ]
     + [norm_per_cell(ss.sel(unit_id=exp_set)).to_dataframe() for ss in S_ls]
