@@ -288,10 +288,10 @@ S_org, S_bin_org, S_up, S_bin_up, YrA, YrA_up = (
 )
 met_ds = [
     (S_org, S_gt, {"mets": ["correlation"]}),
-    (S_org, S_gt, {"mets": ["hamming", "edit"], "nthres": 9}),
+    (S_org, S_gt, {"mets": ["correlation", "hamming", "edit"], "nthres": 9}),
     (S_bin_org, S_gt, {"mets": ["correlation", "hamming", "edit"]}),
     (S_up, S_gt_true, {"mets": ["correlation"]}),
-    (S_up, S_gt_true, {"mets": ["hamming", "edit"], "nthres": 9}),
+    (S_up, S_gt_true, {"mets": ["correlation", "hamming", "edit"], "nthres": 9}),
     (S_bin_up, S_gt_true, {"mets": ["correlation", "hamming", "edit"]}),
 ]
 met_res = pd.concat(
