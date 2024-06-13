@@ -265,9 +265,12 @@ def compute_dist(trueS, newS, metric):
     if "org" in Sname:
         mthd = "original"
         Sname.remove("org")
-    elif "upsamp" in newS.name:
+    elif "upsamp" in Sname:
         mthd = "upsampled"
         Sname.remove("upsamp")
+    elif "updn" in Sname:
+        mthd = "up/down"
+        Sname.remove("updn")
     else:
         mthd = "unknown"
     return pd.DataFrame(
@@ -314,7 +317,7 @@ updt_ds = xr.open_dataset(os.path.join(INT_PATH, "temp_res.nc"))
 true_ds = open_minian(os.path.join(INT_PATH, "simulated")).isel(
     unit_id=updt_ds.coords["unit_id"]
 )
-
+subset = updt_ds.coords["unit_id"]
 S_gt, S_gt_true = true_ds["S"].dropna("frame", how="all"), true_ds["S_true"]
 S_org, S_bin_org, S_up, S_bin_up, YrA, YrA_up = (
     updt_ds["S-org"].dropna("frame", how="all"),
@@ -324,6 +327,14 @@ S_org, S_bin_org, S_up, S_bin_up, YrA, YrA_up = (
     updt_ds["YrA"].dropna("frame", how="all"),
     updt_ds["YrA_interp"],
 )
+S_updn, S_bin_updn = (
+    S_up.coarsen({"frame": 10}).sum().rename("S-updn"),
+    S_bin_up.coarsen({"frame": 10}).sum().rename("S-bin-updn"),
+)
+S_updn = S_updn.assign_coords({"frame": np.ceil(S_updn.coords["frame"]).astype(int)})
+S_bin_updn = S_bin_updn.assign_coords(
+    {"frame": np.ceil(S_bin_updn.coords["frame"]).astype(int)}
+)
 met_ds = [
     (S_org, S_gt, {"mets": ["correlation"]}),
     (S_org, S_gt, {"mets": ["correlation", "hamming", "edit"], "nthres": 9}),
@@ -331,6 +342,9 @@ met_ds = [
     (S_up, S_gt_true, {"mets": ["correlation"]}),
     (S_up, S_gt_true, {"mets": ["correlation", "hamming", "edit"], "nthres": 9}),
     (S_bin_up, S_gt_true, {"mets": ["correlation", "hamming", "edit"]}),
+    (S_updn, S_gt, {"mets": ["correlation"]}),
+    (S_updn, S_gt, {"mets": ["correlation", "hamming", "edit"], "nthres": 9}),
+    (S_bin_updn, S_gt, {"mets": ["correlation", "hamming", "edit"]}),
 ]
 met_res = pd.concat(
     [compute_metrics(m[0], m[1], **m[2]) for m in met_ds], ignore_index=True
@@ -356,6 +370,7 @@ exp_set = np.random.choice(subset, nsamp, replace=False)
 fig_dict = {
     "exp_original": [S_gt, YrA, S_org, S_bin_org] + thresS(S_org, 9),
     # "exp_upsamp": [S_gt_true, YrA_interp, S_up, S_bin_up] + thresS(S_up, 9),
+    "exp_updn": [S_gt, YrA, S_updn, S_bin_updn] + thresS(S_updn, 9),
 }
 for figname, plt_trs in fig_dict.items():
     plt_dat = pd.concat(
