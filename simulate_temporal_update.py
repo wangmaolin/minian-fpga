@@ -150,7 +150,8 @@ for up_type, cur_YrA in {"org": YrA, "upsamp": YrA_interp}.items():
             s_bin = cp.Variable((T, 1))
             b_bin = cp.Variable()
             obj = cp.Minimize(
-                cp.norm(y - scale * c_bin - b_bin)  # + sps_penal * tn * cp.norm(s_bin)
+                cp.norm(y - scale * c_bin - b_bin)
+                # + sps_penal * tn * cp.norm(s_bin)
             )
             cons = [s_bin == G @ c_bin, c_bin >= 0, b_bin >= 0, s_bin >= 0, s_bin <= 1]
             prob = cp.Problem(obj, cons)
@@ -184,6 +185,12 @@ for up_type, cur_YrA in {"org": YrA, "upsamp": YrA_interp}.items():
             )
             obj_df.append(pd.DataFrame([{"obj": objvals[opt_idx], "iter": niter}]))
             lb_df.append(pd.DataFrame([{"lb": prob.value, "iter": niter}]))
+            scale_new = np.linalg.lstsq(
+                G_inv @ opt_s, (y - b_bin.value).squeeze(), rcond=None
+            )[0].item()
+            # est = G_inv @ opt_s + b_bin.value
+            # idx = np.argmax(est)
+            # scale_new = (y[idx] / est[idx]).item()
             if np.abs(scale_new - scale) <= tol:
                 break
             else:
