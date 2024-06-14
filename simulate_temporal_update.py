@@ -53,7 +53,7 @@ Y, A, C, S, shifts, C_gt, S_gt = generate_data(
 
 # %% temporal update
 minian_ds = open_minian(os.path.join(INT_PATH, "simulated"), return_dict=True)
-subset = minian_ds["A"].coords["unit_id"][:5]
+subset = minian_ds["A"].coords["unit_id"]
 Y, A, C_gt, S_gt, C_gt_true, S_gt_true = (
     minian_ds["Y"],
     minian_ds["A"],
@@ -385,7 +385,7 @@ g = sns.FacetGrid(
 g.map_dataframe(
     sns.violinplot, x="variable", y="dist", bw_adjust=0.5, cut=0.3, saturation=0.6
 )
-g.map_dataframe(sns.swarmplot, x="variable", y="dist", edgecolor="auto", linewidth=1)
+# g.map_dataframe(sns.swarmplot, x="variable", y="dist", edgecolor="auto", linewidth=1)
 g.tick_params(axis="x", rotation=90)
 g.figure.savefig(os.path.join(FIG_PATH, "metrics.svg"), dpi=500, bbox_inches="tight")
 nsamp = min(10, len(subset))
