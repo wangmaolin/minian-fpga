@@ -61,7 +61,7 @@ def ar_trace(frame: int, pfire: float, g: np.ndarray):
 
 def exp_trace(frame: int, pfire: float, tau_d: float, tau_r: float, trunc_thres=1e-6):
     S = random.binomial(n=1, p=pfire, size=frame).astype(float)
-    t = np.arange(frame)
+    t = np.arange(1, frame + 1)
     v = np.exp(-t / tau_d) - np.exp(-t / tau_r)
     v = v[v > trunc_thres]
     C = np.convolve(v, S, mode="full")[:frame]
@@ -326,6 +326,18 @@ def computeY(A, C, A_bg, C_bg, shifts, sig_scale, noise_scale, post_offset, post
     Y *= post_gain
     np.clip(Y, 0, 255, out=Y)
     return Y.astype(np.uint8)
+
+
+def tau2AR(tau_d, tau_r):
+    z1, z2 = np.exp(-1 / tau_d), np.exp(-1 / tau_r)
+    return z1 + z2, -z1 * z2
+
+
+def AR2tau(theta1, theta2):
+    rts = np.roots([1, -theta1, -theta2])
+    z1, z2 = rts[0], rts[1]
+    tau_d, tau_r = -1 / np.log(z1), -1 / np.log(z2)
+    return tau_d, tau_r
 
 
 # %% main
