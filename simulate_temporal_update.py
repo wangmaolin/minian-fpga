@@ -180,7 +180,6 @@ for up_type, up_factor in {"org": 1, "upsamp": PARAM_UPSAMP}.items():
             cons = [s_bin == G @ c_bin, c_bin >= 0, b_bin >= 0, s_bin >= 0, s_bin <= 1]
             prob = cp.Problem(obj, cons)
             prob.solve()
-            objvals = []
             svals = thresS(s_bin.value, 1000, rename=False)
             objvals = [
                 np.linalg.norm(y - scale * (RG @ ss) - b_bin.value) for ss in svals
@@ -360,7 +359,11 @@ true_ds = open_minian(os.path.join(INT_PATH, "simulated")).isel(
     unit_id=updt_ds.coords["unit_id"]
 )
 subset = updt_ds.coords["unit_id"]
-S_gt, S_gt_true = true_ds["S"].dropna("frame", how="all"), true_ds["S_true"]
+S_gt, S_gt_true, C_gt = (
+    true_ds["S"].dropna("frame", how="all"),
+    true_ds["S_true"],
+    true_ds["C"].dropna("frame", how="all"),
+)
 S_org, S_bin_org, S_up, S_bin_up, YrA = (
     updt_ds["S-org"].dropna("frame", how="all"),
     updt_ds["S-bin-org"].dropna("frame", how="all"),
@@ -415,8 +418,8 @@ g.tick_params(axis="x", rotation=90)
 g.figure.savefig(os.path.join(FIG_PATH, "metrics.svg"), dpi=500, bbox_inches="tight")
 nsamp = min(10, len(subset))
 fig_dict = {
-    "original": [S_gt, YrA, S_org, S_bin_org] + thresS(S_org, 9),
-    "updn": [S_gt, YrA, S_updn, S_bin_updn] + thresS(S_updn, 9),
+    "original": [S_gt, C_gt, YrA, S_org, S_bin_org] + thresS(S_org, 9),
+    "updn": [S_gt, C_gt, YrA, S_updn, S_bin_updn] + thresS(S_updn, 9),
 }
 met_sub = met_res.sort_values(["method", "metric"]).set_index(["method", "metric"])
 for mthd, plt_trs in fig_dict.items():
