@@ -320,7 +320,7 @@ def compute_dist(trueS, newS, metric, corr_dilation=1):
         mthd = "upsampled"
         Sname.remove("upsamp")
     elif "updn" in Sname:
-        mthd = "up/down"
+        mthd = "updn"
         Sname.remove("updn")
     else:
         mthd = "unknown"
@@ -414,17 +414,30 @@ g.map_dataframe(
 g.tick_params(axis="x", rotation=90)
 g.figure.savefig(os.path.join(FIG_PATH, "metrics.svg"), dpi=500, bbox_inches="tight")
 nsamp = min(10, len(subset))
-exp_set = np.random.choice(subset, nsamp, replace=False)
 fig_dict = {
-    "exp_original": [S_gt, YrA, S_org, S_bin_org] + thresS(S_org, 9),
-    # "exp_upsamp": [S_gt_true, YrA_interp, S_up, S_bin_up] + thresS(S_up, 9),
-    "exp_updn": [S_gt, YrA, S_updn, S_bin_updn] + thresS(S_updn, 9),
+    "original": [S_gt, YrA, S_org, S_bin_org] + thresS(S_org, 9),
+    "updn": [S_gt, YrA, S_updn, S_bin_updn] + thresS(S_updn, 9),
 }
-for figname, plt_trs in fig_dict.items():
-    plt_dat = pd.concat(
-        [norm_per_cell(tr.sel(unit_id=exp_set)).to_dataframe() for tr in plt_trs]
-    ).reset_index()
-    plt_dat = plt_dat.melt(id_vars=["frame", "unit_id"])
-    fig = px.line(plt_dat, facet_row="unit_id", x="frame", y="value", color="variable")
-    fig.update_layout(height=nsamp * 150)
-    fig.write_html(os.path.join(FIG_PATH, "{}.html".format(figname)))
+met_sub = met_res.sort_values(["method", "metric"]).set_index(["method", "metric"])
+for mthd, plt_trs in fig_dict.items():
+    cur_uids = met_sub.loc[mthd, "edit"].sort_values("dist")["unit_id"]
+    for met_grp, exp_set in {
+        "best": cur_uids[:nsamp],
+        "worst": cur_uids[-nsamp:],
+        "fair": cur_uids[int(len(cur_uids) / 2) : int(len(cur_uids) / 2) + nsamp],
+    }.items():
+        plt_dat = pd.concat(
+            [
+                norm_per_cell(tr.sel(unit_id=np.array(exp_set))).to_dataframe()
+                for tr in plt_trs
+            ],
+            axis="columns",
+        ).reset_index()
+        plt_dat = plt_dat.melt(id_vars=["frame", "unit_id"]).sort_values(
+            ["unit_id", "variable", "frame"]
+        )
+        fig = px.line(
+            plt_dat, facet_row="unit_id", x="frame", y="value", color="variable"
+        )
+        fig.update_layout(height=nsamp * 150)
+        fig.write_html(os.path.join(FIG_PATH, "exp-{}-{}.html".format(mthd, met_grp)))
