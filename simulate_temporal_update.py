@@ -118,7 +118,10 @@ for up_type, up_factor in {"org": 1, "upsamp": PARAM_UPSAMP}.items():
     sps_penal = 10
     max_iters = 50
     res = {"C": [], "S": [], "b": [], "C-bin": [], "S-bin": [], "b-bin": [], "scal": []}
-    for y, g, tn in tqdm(zip(np.array(YrA), gs, tns), total=np.array(YrA).shape[0]):
+    for y, g, tn in tqdm(
+        zip(np.array(C_gt.transpose("unit_id", "frame")), gs, tns),
+        total=np.array(YrA).shape[0],
+    ):
         # parameters
         Torg = len(y)
         T = Torg * up_factor
@@ -392,7 +395,7 @@ met_ds = [
 ]
 met_res = pd.concat(
     [compute_metrics(m[0], m[1], **m[2]) for m in met_ds], ignore_index=True
-)
+).dropna()
 sns.set_theme(style="darkgrid")
 g = sns.FacetGrid(
     met_res,
@@ -411,7 +414,7 @@ g.map_dataframe(
     bw_adjust=0.5,
     cut=0.3,
     saturation=0.6,
-    log_scale=True,
+    # log_scale=True,
 )
 # g.map_dataframe(sns.swarmplot, x="variable", y="dist", edgecolor="auto", linewidth=1)
 g.tick_params(axis="x", rotation=90)
