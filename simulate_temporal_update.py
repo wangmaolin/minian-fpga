@@ -347,12 +347,18 @@ def norm_per_cell(S):
     )
 
 
-def compute_metrics(S, S_true, mets, nthres: int = None):
+def compute_metrics(S, S_true, mets, nthres: int = None, coarsen=None):
     S, S_true = S.dropna("frame"), S_true.dropna("frame")
     if nthres is not None:
         S_ls = thresS(S, nthres)
     else:
         S_ls = [S]
+    if coarsen is not None:
+        S_ls = [s.coarsen(coarsen).sum() for s in S_ls]
+        S_ls = [
+            s.assign_coords({"frame": np.ceil(s.coords["frame"]).astype(int)})
+            for s in S_ls
+        ]
     res_ls = [compute_dist(S_true, curS, met) for curS, met in itt.product(S_ls, mets)]
     return pd.concat(res_ls)
 
@@ -390,12 +396,20 @@ met_ds = [
     (S_up, S_gt_true, {"mets": ["correlation", "hamming", "edit"], "nthres": 9}),
     (S_bin_up, S_gt_true, {"mets": ["correlation", "hamming", "edit"]}),
     (S_updn, S_gt, {"mets": ["correlation"]}),
-    (S_updn, S_gt, {"mets": ["correlation", "hamming", "edit"], "nthres": 9}),
+    (
+        S_up.rename("S-updn"),
+        S_gt,
+        {
+            "mets": ["correlation", "hamming", "edit"],
+            "nthres": 9,
+            "coarsen": {"frame": 10},
+        },
+    ),
     (S_bin_updn, S_gt, {"mets": ["correlation", "hamming", "edit"]}),
 ]
 met_res = pd.concat(
     [compute_metrics(m[0], m[1], **m[2]) for m in met_ds], ignore_index=True
-).dropna()
+)
 sns.set_theme(style="darkgrid")
 g = sns.FacetGrid(
     met_res,
