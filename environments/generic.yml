@@ -29,7 +29,7 @@ dependencies:
   - colorcet
   - requests
   - tqdm
-  - cvxpy
+  - cvxpy == 1.5.1
   - pymetis
   - rechunker
   - natsort
