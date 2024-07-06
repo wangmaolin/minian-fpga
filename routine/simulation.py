@@ -53,19 +53,28 @@ def apply_arcoef(s: np.ndarray, g: np.ndarray):
     return c
 
 
-def ar_trace(frame: int, pfire: float, g: np.ndarray):
-    S = random.binomial(n=1, p=pfire, size=frame).astype(float)
+def ar_trace(frame: int, P: np.ndarray, g: np.ndarray):
+    S = markov_fire(frame, P).astype(float)
     C = apply_arcoef(S, g)
     return C, S
 
 
-def exp_trace(frame: int, pfire: float, tau_d: float, tau_r: float, trunc_thres=1e-6):
-    S = random.binomial(n=1, p=pfire, size=frame).astype(float)
+def exp_trace(frame: int, P: np.ndarray, tau_d: float, tau_r: float, trunc_thres=1e-6):
+    S = markov_fire(frame, P).astype(float)
     t = np.arange(1, frame + 1)
     v = np.exp(-t / tau_d) - np.exp(-t / tau_r)
     v = v[v > trunc_thres]
     C = np.convolve(v, S, mode="full")[:frame]
     return C, S
+
+
+def markov_fire(frame: int, P: np.ndarray):
+    assert P.shape == (2, 2)
+    assert (P.sum(axis=1) == 1).all()
+    S = np.zeros(frame, dtype=int)
+    for i in range(1, len(S)):
+        S[i] = np.random.choice([0, 1], p=P[S[i - 1], :])
+    return S
 
 
 def random_walk(
@@ -112,7 +121,7 @@ def simulate_data(
     sz_mean: float,
     sz_sigma: float,
     sz_min: float,
-    tmp_pfire: float,
+    tmp_P: np.ndarray,
     tmp_tau_d: float,
     tmp_tau_r: float,
     post_offset: float,
@@ -166,7 +175,7 @@ def simulate_data(
         sparse.COO.from_numpy(np.where(A > zero_thres, A, 0)), chunks=-1
     )
     traces = [
-        exp_trace(ff * upsample, tmp_pfire, tmp_tau_d * upsample, tmp_tau_r * upsample)
+        exp_trace(ff * upsample, tmp_P, tmp_tau_d * upsample, tmp_tau_r * upsample)
         for _ in range(len(cent))
     ]
     if upsample > 1:
