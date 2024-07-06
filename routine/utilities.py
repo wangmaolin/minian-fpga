@@ -1319,3 +1319,9 @@ def norm(a):
         return (a - amin) / diff
     else:
         return a - amin
+
+
+def scal_lstsq(a, b):
+    if a.ndim == 1:
+        a = a.reshape((-1, 1))
+    return np.linalg.lstsq(a, b.squeeze(), rcond=None)[0].item()

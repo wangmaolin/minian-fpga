@@ -19,7 +19,7 @@ from tqdm.auto import tqdm
 from routine.cnmf import compute_trace, update_temporal_block
 from routine.minian_functions import open_minian
 from routine.simulation import generate_data, tau2AR
-from routine.utilities import norm, rechunk_like
+from routine.utilities import norm, rechunk_like, scal_lstsq
 
 INT_PATH = "./intermediate/temporal_simulation"
 FIG_PATH = "./figs/temporal_simulation"
@@ -164,7 +164,7 @@ for up_type, up_factor in {"org": 1, "upsamp": PARAM_UPSAMP}.items():
         # bin prob
         scale = np.ptp(s_init.value)
         niter = 0
-        tol = 1e-6
+        tol = 1e-8
         s_bin_df = pd.DataFrame(
             {"s_bin": s.value.squeeze(), "frame": np.arange(T), "iter": -1}
         )
@@ -184,11 +184,15 @@ for up_type, up_factor in {"org": 1, "upsamp": PARAM_UPSAMP}.items():
             prob = cp.Problem(obj, cons)
             prob.solve()
             svals = thresS(s_bin.value, 1000, rename=False)
+            cvals = [RG @ ss for ss in svals]
+            scal_vals = [scal_lstsq(cc, y) for cc in cvals]
             objvals = [
-                np.linalg.norm(y - scale * (RG @ ss) - b_bin.value) for ss in svals
+                np.linalg.norm(y - scl * cc - b_bin.value)
+                for scl, cc in zip(scal_vals, cvals)
             ]
             opt_idx = np.argmin(objvals)
             opt_s = svals[opt_idx]
+            scale_new = scal_vals[opt_idx]
             opt_obj = objvals[opt_idx]
             try:
                 opt_obj_last = obj_df["obj"].min()
@@ -223,15 +227,12 @@ for up_type, up_factor in {"org": 1, "upsamp": PARAM_UPSAMP}.items():
             lb_df = pd.concat(
                 [lb_df, pd.DataFrame([{"lb": prob.value, "iter": niter}])]
             )
-            scale_new = np.linalg.lstsq(
-                RG @ opt_s, (y - b_bin.value).squeeze(), rcond=None
-            )[0].item()
             # est = G_inv @ opt_s + b_bin.value
             # idx = np.argmax(est)
             # scale_new = (y[idx] / est[idx]).item()
             if np.abs(scale_new - scale) <= tol:
                 break
-            elif opt_obj_last - opt_obj >= 0 and opt_obj_last - opt_obj <= tol:
+            elif abs(opt_obj_last - opt_obj) <= tol:
                 break
             else:
                 scale = scale_new
