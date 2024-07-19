@@ -437,9 +437,17 @@ g.figure.savefig(os.path.join(FIG_PATH, "metrics.svg"), dpi=500, bbox_inches="ti
 nsamp = min(10, len(subset))
 fig_dict = {
     "original": [S_gt, C_gt, YrA, S_org, S_bin_org] + thresS(S_org, 9),
-    "updn": [S_gt, C_gt, YrA, S_updn, S_bin_updn] + thresS(S_updn, 9),
+    "updn": [S_gt, C_gt, YrA, S_updn, S_bin_updn]
+    + [
+        s.coarsen({"frame": 10}).sum().assign_coords(frame=S_gt.coords["frame"])
+        for s in thresS(S_up.rename("S-updn"), 9)
+    ],
 }
-met_sub = met_res.sort_values(["method", "metric"]).set_index(["method", "metric"])
+met_sub = (
+    met_res[met_res["variable"] == "S-bin"]
+    .sort_values(["method", "metric"])
+    .set_index(["method", "metric"])
+)
 for mthd, plt_trs in fig_dict.items():
     cur_uids = met_sub.loc[mthd, "edit"].sort_values("dist")["unit_id"]
     for met_grp, exp_set in {
