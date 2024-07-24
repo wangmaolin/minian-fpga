@@ -1,4 +1,5 @@
 import functools as fct
+import logging
 import os
 import warnings
 from typing import List, Optional, Tuple, Union
@@ -26,17 +27,10 @@ from skimage import morphology as moph
 from sklearn.linear_model import LassoLars
 from statsmodels.tsa.stattools import acovf
 
-import logging
 logging.getLogger().setLevel(logging.DEBUG)
 
-from .utilities import (
-    custom_arr_optimize,
-    custom_delay_optimize,
-    med_baseline,
-    open_minian,
-    rechunk_like,
-    save_minian,
-)
+from .utilities import (custom_arr_optimize, custom_delay_optimize,
+                        med_baseline, open_minian, rechunk_like, save_minian)
 
 
 def get_noise_fft(
@@ -1100,7 +1094,6 @@ def update_temporal_block(
     use_smooth=True,
     med_wd=None,
     concurrent=False,
-    return_param=False,
     **kwargs
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -1191,8 +1184,6 @@ def update_temporal_block(
     if med_wd is not None:
         for i, cur_yra in enumerate(YrA):
             YrA[i, :] = med_baseline(cur_yra, med_wd)
-    if return_param:
-        return YrA, g, tn
     if concurrent:
         c, s, b, c0 = update_temporal_cvxpy(YrA, g, tn, **kwargs)
     else:

@@ -1,45 +1,38 @@
 # %% import and definition
 import itertools as itt
 import os
-import warnings
 
 import cv2
-import cvxpy as cp
 import Levenshtein
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import scipy.sparse as sps
 import seaborn as sns
 import xarray as xr
 from scipy.spatial.distance import cdist
 from tqdm.auto import tqdm
 
-from routine.cnmf import compute_trace, update_temporal_block
+from routine.bin_algo import (
+    construct_G,
+    construct_R,
+    estimate_coefs,
+    max_thres,
+    solve_deconv,
+    solve_deconv_bin,
+)
 from routine.minian_functions import open_minian
-from routine.simulation import generate_data, tau2AR
-from routine.utilities import norm, rechunk_like, scal_lstsq
+from routine.simulation import generate_data
+from routine.utilities import norm
 
 INT_PATH = "./intermediate/temporal_simulation"
 FIG_PATH = "./figs/temporal_simulation"
 PARAM_TAU_D = 6
 PARAM_TAU_R = 1
 PARAM_UPSAMP = 10
+PARAM_EST_AR = False
 
 os.makedirs(INT_PATH, exist_ok=True)
 os.makedirs(FIG_PATH, exist_ok=True)
-
-
-def thresS(S, nthres, rename=True):
-    Smax = S.max()
-    if rename:
-        return [
-            (S > Smax * th).rename(S.name + "-th_{:.1f}".format(th))
-            for th in np.linspace(0.1, 0.9, nthres)
-        ]
-    else:
-        return [(S > Smax * th) for th in np.linspace(0.1, 0.9, nthres)]
 
 
 # %% generate data
@@ -68,7 +61,7 @@ Y, A, C, S, shifts, C_gt, S_gt = generate_data(
 
 # %% temporal update
 minian_ds = open_minian(os.path.join(INT_PATH, "simulated"), return_dict=True)
-subset = minian_ds["A"].coords["unit_id"]
+subset = minian_ds["A"].coords["unit_id"][:5]
 Y, A, C_gt, S_gt, C_gt_true, S_gt_true = (
     minian_ds["Y"],
     minian_ds["A"],
@@ -82,166 +75,62 @@ A, C_gt, S_gt = (
     C_gt.sel(unit_id=subset),
     S_gt.sel(unit_id=subset),
 )
-b = rechunk_like(
-    xr.DataArray(
-        np.zeros((A.sizes["height"], A.sizes["width"])),
-        dims=["height", "width"],
-        coords={d: A.coords[d] for d in ["height", "width"]},
-    ),
-    A,
-)
-f = rechunk_like(
-    xr.DataArray(
-        np.zeros((Y.sizes["frame"])),
-        dims=["frame"],
-        coords={"frame": Y.coords["frame"]},
-    ),
-    C_gt,
-)
-YrA = compute_trace(Y, A, b, C_gt, f).compute()
-updt_ds = [YrA.rename("YrA")]
+# b = rechunk_like(
+#     xr.DataArray(
+#         np.zeros((A.sizes["height"], A.sizes["width"])),
+#         dims=["height", "width"],
+#         coords={d: A.coords[d] for d in ["height", "width"]},
+#     ),
+#     A,
+# )
+# f = rechunk_like(
+#     xr.DataArray(
+#         np.zeros((Y.sizes["frame"])),
+#         dims=["frame"],
+#         coords={"frame": Y.coords["frame"]},
+#     ),
+#     C_gt,
+# )
+# YrA = compute_trace(Y, A, b, C_gt, f).compute()
+# updt_ds = [YrA.rename("YrA")]
+Y_solve = C_gt
+sps_penal = 10
+max_iters = 50
+updt_ds = []
+metric_df = []
 for up_type, up_factor in {"org": 1, "upsamp": PARAM_UPSAMP}.items():
-    _, _, tns = update_temporal_block(
-        np.array(YrA),
-        noise_freq=0.1,
-        p=2,
-        add_lag=100,
-        sparse_penal=0.1,
-        max_iters=1000,
-        zero_thres=1e-9,
-        return_param=True,
-    )
-    gs = np.tile(
-        tau2AR(PARAM_TAU_D * up_factor, PARAM_TAU_R * up_factor),
-        (A.sizes["unit_id"], 1),
-    )
-    sps_penal = 10
-    max_iters = 50
     res = {"C": [], "S": [], "b": [], "C-bin": [], "S-bin": [], "b-bin": [], "scal": []}
-    for y, g, tn in tqdm(
-        zip(np.array(C_gt.transpose("unit_id", "frame")), gs, tns),
-        total=np.array(YrA).shape[0],
+    for y in tqdm(
+        Y_solve.transpose("unit_id", "frame"), total=Y_solve.sizes["unit_id"]
     ):
         # parameters
-        Torg = len(y)
-        T = Torg * up_factor
-        G = sps.dia_matrix(
-            (
-                np.tile(np.concatenate(([1], -g)), (T, 1)).T,
-                -np.arange(len(g) + 1),
-            ),
-            shape=(T, T),
-        ).tocsc()
-        G_inv = sps.linalg.inv(G)
-        rs_vec = np.zeros(T)
-        rs_vec[:up_factor] = 1
-        Rs = sps.coo_matrix(
-            np.stack([np.roll(rs_vec, up_factor * i) for i in range(Torg)], axis=0)
+        y_norm = np.array(norm(y))
+        T = len(y_norm)
+        g, tn = estimate_coefs(
+            y_norm, p=2, noise_freq=0.1, use_smooth=True, add_lag=100
         )
-        RG = (Rs @ G_inv).todense()
-        y = y - y.min()
-        y = y / y.max()
-        y = y.reshape((-1, 1))
-        # org prob
-        c = cp.Variable((T, 1))
-        s = cp.Variable((T, 1))
-        b = cp.Variable()
-        obj = cp.Minimize(cp.norm(y - Rs @ c - b) + sps_penal * tn * cp.norm(s))
-        cons = [s == G @ c, c >= 0, s >= 0, b >= 0]
-        prob = cp.Problem(obj, cons)
-        prob.solve()
-        res["C"].append(c.value)
-        res["S"].append(s.value)
-        res["b"].append(b.value)
-        # no sparse prob
-        c_init = cp.Variable((T, 1))
-        s_init = cp.Variable((T, 1))
-        b_init = cp.Variable()
-        obj_init = cp.Minimize(cp.norm(y - Rs @ c_init - b_init))
-        cons_init = [s_init == G @ c_init, c_init >= 0, s_init >= 0, b_init >= 0]
-        prob_init = cp.Problem(obj_init, cons_init)
-        prob_init.solve()
-        # bin prob
-        scale = np.ptp(s_init.value)
-        niter = 0
-        tol = 1e-8
-        s_bin_df = pd.DataFrame(
-            {"s_bin": s.value.squeeze(), "frame": np.arange(T), "iter": -1}
-        )
-        scale_df = None
-        opt_s_df = None
-        obj_df = None
-        lb_df = None
-        while niter < max_iters:
-            c_bin = cp.Variable((T, 1))
-            s_bin = cp.Variable((T, 1))
-            b_bin = cp.Variable()
-            obj = cp.Minimize(
-                cp.norm(y - scale * Rs @ c_bin - b_bin)
-                # + sps_penal * tn * cp.norm(s_bin)
-            )
-            cons = [s_bin == G @ c_bin, c_bin >= 0, b_bin >= 0, s_bin >= 0, s_bin <= 1]
-            prob = cp.Problem(obj, cons)
-            prob.solve()
-            svals = thresS(s_bin.value, 1000, rename=False)
-            cvals = [RG @ ss for ss in svals]
-            scal_vals = [scal_lstsq(cc, y) for cc in cvals]
-            objvals = [
-                np.linalg.norm(y - scl * cc - b_bin.value)
-                for scl, cc in zip(scal_vals, cvals)
-            ]
-            opt_idx = np.argmin(objvals)
-            opt_s = svals[opt_idx]
-            scale_new = scal_vals[opt_idx]
-            opt_obj = objvals[opt_idx]
-            try:
-                opt_obj_last = obj_df["obj"].min()
-            except TypeError:
-                opt_obj_last = np.inf
-            scale_df = pd.concat(
-                [scale_df, pd.DataFrame([{"scale": scale, "iter": niter}])]
-            )
-            s_bin_df = pd.concat(
-                [
-                    s_bin_df,
-                    pd.DataFrame(
-                        {
-                            "s_bin": s_bin.value.squeeze(),
-                            "frame": np.arange(T),
-                            "iter": niter,
-                        }
-                    ),
-                ]
-            )
-            opt_s_df = pd.concat(
-                [
-                    opt_s_df,
-                    pd.DataFrame(
-                        {"opt_s": opt_s.squeeze(), "frame": np.arange(T), "iter": niter}
-                    ),
-                ]
-            )
-            obj_df = pd.concat(
-                [obj_df, pd.DataFrame([{"obj": opt_obj, "iter": niter}])]
-            )
-            lb_df = pd.concat(
-                [lb_df, pd.DataFrame([{"lb": prob.value, "iter": niter}])]
-            )
-            # est = G_inv @ opt_s + b_bin.value
-            # idx = np.argmax(est)
-            # scale_new = (y[idx] / est[idx]).item()
-            if np.abs(scale_new - scale) <= tol:
-                break
-            elif abs(opt_obj_last - opt_obj) <= tol:
-                break
-            else:
-                scale = scale_new
-                niter += 1
+        if PARAM_EST_AR:
+            G = construct_G(g, T * up_factor, fromTau=False)
         else:
-            warnings.warn("max scale iteration reached")
-        res["C-bin"].append(G_inv @ opt_s)
-        res["S-bin"].append(opt_s)
-        res["b-bin"].append(b_bin.value)
+            G = construct_G(
+                (PARAM_TAU_D * up_factor, PARAM_TAU_R * up_factor),
+                T * up_factor,
+                fromTau=True,
+            )
+        R = construct_R(T, up_factor)
+        # org algo
+        c, s, b = solve_deconv(y_norm, G, l1_penal=sps_penal * tn, R=R)
+        res["C"].append(c)
+        res["S"].append(s)
+        res["b"].append(b)
+        # bin algo
+        c_bin, s_bin, b_bin, scale, met_df = solve_deconv_bin(y_norm, G, R)
+        met_df["unit_id"] = y.coords["unit_id"].item()
+        met_df["up_type"] = up_type
+        metric_df.append(met_df)
+        res["C-bin"].append(c_bin)
+        res["S-bin"].append(s_bin)
+        res["b-bin"].append(b_bin)
         res["scal"].append(scale)
     # save variables
     for vname, dat in res.items():
@@ -263,7 +152,7 @@ for up_type, up_factor in {"org": 1, "upsamp": PARAM_UPSAMP}.items():
                         "frame": (
                             C_gt_true.coords["frame"]
                             if up_type == "upsamp"
-                            else YrA.coords["frame"]
+                            else Y_solve.coords["frame"]
                         ),
                         "unit_id": A.coords["unit_id"],
                     },
@@ -272,6 +161,8 @@ for up_type, up_factor in {"org": 1, "upsamp": PARAM_UPSAMP}.items():
             )
 updt_ds = xr.merge(updt_ds)
 updt_ds.to_netcdf(os.path.join(INT_PATH, "temp_res.nc"))
+metric_df = pd.concat(metric_df, ignore_index=True)
+metric_df.to_feather(os.path.join(INT_PATH, "metrics.feat"))
 
 
 # %% plot example and metrics
@@ -351,7 +242,7 @@ def norm_per_cell(S):
 def compute_metrics(S, S_true, mets, nthres: int = None, coarsen=None):
     S, S_true = S.dropna("frame"), S_true.dropna("frame")
     if nthres is not None:
-        S_ls = thresS(S, nthres)
+        S_ls = max_thres(S, nthres)
     else:
         S_ls = [S]
     if coarsen is not None:
@@ -436,11 +327,11 @@ g.tick_params(axis="x", rotation=90)
 g.figure.savefig(os.path.join(FIG_PATH, "metrics.svg"), dpi=500, bbox_inches="tight")
 nsamp = min(10, len(subset))
 fig_dict = {
-    "original": [S_gt, C_gt, YrA, S_org, S_bin_org] + thresS(S_org, 9),
+    "original": [S_gt, C_gt, YrA, S_org, S_bin_org] + max_thres(S_org, 9),
     "updn": [S_gt, C_gt, YrA, S_updn, S_bin_updn]
     + [
         s.coarsen({"frame": 10}).sum().assign_coords(frame=S_gt.coords["frame"])
-        for s in thresS(S_up.rename("S-updn"), 9)
+        for s in max_thres(S_up.rename("S-updn"), 9)
     ],
 }
 met_sub = (
