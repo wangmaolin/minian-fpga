@@ -29,7 +29,7 @@ FIG_PATH = "./figs/temporal_simulation"
 PARAM_TAU_D = 6
 PARAM_TAU_R = 1
 PARAM_UPSAMP = 10
-PARAM_EST_AR = False
+PARAM_EST_AR = True
 
 os.makedirs(INT_PATH, exist_ok=True)
 os.makedirs(FIG_PATH, exist_ok=True)
@@ -106,9 +106,7 @@ for up_type, up_factor in {"org": 1, "upsamp": PARAM_UPSAMP}.items():
         # parameters
         y_norm = np.array(norm(y))
         T = len(y_norm)
-        g, tn = estimate_coefs(
-            y_norm, p=2, noise_freq=0.1, use_smooth=True, add_lag=100
-        )
+        g, tn = estimate_coefs(y_norm, p=2, noise_freq=0.9, use_smooth=False, add_lag=0)
         if PARAM_EST_AR:
             G = construct_G(g, T * up_factor, fromTau=False)
         else:

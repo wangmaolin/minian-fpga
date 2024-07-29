@@ -38,11 +38,11 @@ def estimate_coefs(
 ):
     tn = noise_fft(y, noise_range=(noise_freq, 1))
     if use_smooth:
-        y_ar = filt_fft(y, noise_freq, "low")
+        y_ar = filt_fft(y.squeeze(), noise_freq, "low")
         tn_ar = noise_fft(y_ar, noise_range=(noise_freq, 1))
     else:
         y_ar, tn_ar = y, tn
-    g = get_ar_coef(y_ar, tn_ar, p=p, add_lag=add_lag)
+    g = get_ar_coef(y_ar, np.nan_to_num(tn_ar), p=p, add_lag=add_lag)
     return g, tn
 
 
