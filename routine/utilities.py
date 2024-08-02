@@ -1325,3 +1325,12 @@ def scal_lstsq(a, b):
     if a.ndim == 1:
         a = a.reshape((-1, 1))
     return np.linalg.lstsq(a, b.squeeze(), rcond=None)[0].item()
+
+
+def scal_like(src: np.ndarray, tgt: np.ndarray, zero_center=True):
+    smin, smax = np.nanmin(src), np.nanmax(src)
+    tmin, tmax = np.nanmin(tgt), np.nanmax(tgt)
+    if zero_center:
+        return src / (smax - smin) * (tmax - tmin)
+    else:
+        return (src - smin) / (smax - smin) * (tmax - tmin) + tmin

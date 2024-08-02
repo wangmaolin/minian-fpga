@@ -12,6 +12,7 @@ import plotly.express as px
 import scipy.sparse as sps
 import seaborn as sns
 import xarray as xr
+from scipy.integrate import cumulative_trapezoid
 from scipy.spatial.distance import cdist
 from tqdm.auto import tqdm
 
@@ -25,7 +26,7 @@ from routine.bin_algo import (
 )
 from routine.minian_functions import open_minian
 from routine.simulation import AR2tau, generate_data, tau2AR
-from routine.utilities import norm
+from routine.utilities import norm, scal_like
 
 IN_PATH = "./intermediate/temporal_simulation/"
 INT_PATH = "./intermediate/ar_update"
@@ -75,6 +76,17 @@ def convolve_g(s, g):
     return np.array(Gi @ s.reshape((-1, 1))).squeeze()
 
 
+def convolve_h(s, h):
+    T = len(s)
+    H0 = h.reshape((-1, 1))
+    H1n = [
+        np.vstack([np.zeros(i).reshape((-1, 1)), h[:-i].reshape((-1, 1))])
+        for i in range(1, T)
+    ]
+    H = np.hstack([H0] + H1n)
+    return np.real(np.array(H @ s.reshape((-1, 1))).squeeze())
+
+
 def solve_g(y, s, norm="l2", masking=False):
     T = len(s)
     theta_1, theta_2 = cp.Variable(), cp.Variable()
@@ -98,6 +110,93 @@ def solve_g(y, s, norm="l2", masking=False):
     prob = cp.Problem(obj, cons)
     prob.solve()
     return theta_1.value, theta_2.value
+
+
+def fit_sumexp(y, N, x=None):
+    # ref: https://github.juangburgos.com/FitSumExponentials/lab/index.html
+    T = len(y)
+    if x is None:
+        x = np.arange(T)
+    Y_int = np.zeros((T, N))
+    Y_int[:, 0] = cumulative_trapezoid(y, x, initial=0)
+    for i in range(1, N):
+        Y_int[:, i] = cumulative_trapezoid(Y_int[:, i - 1], x, initial=0)
+    X_pow = np.zeros((T, N))
+    for i, pow in enumerate(range(N)[::-1]):
+        X_pow[:, i] = x**pow
+    Y = np.concatenate([Y_int, X_pow], axis=1)
+    A = np.linalg.inv(Y.T @ Y) @ Y.T @ y
+    A_bar = np.vstack(
+        [A[:N], np.hstack([np.eye(N - 1), np.zeros(N - 1).reshape(-1, 1)])]
+    )
+    lams = np.linalg.eigvals(A_bar)
+    X_exp = np.hstack([np.exp(l * x).reshape((-1, 1)) for l in lams])
+    ps = np.linalg.inv(X_exp.T @ X_exp) @ X_exp.T @ y
+    y_fit = X_exp @ ps
+    return lams, y_fit
+
+
+def solve_h(y, s, s_len=60, norm="l1", smth_penalty=0):
+    T = len(s)
+    if s_len is None:
+        s_len = T
+    else:
+        s_len = min(s_len, T)
+    b = cp.Variable()
+    h = cp.Variable(s_len)
+    h = cp.hstack([h, np.zeros(T - s_len)])
+    H0 = h.reshape((-1, 1))
+    H1n = [
+        cp.vstack([np.zeros(i).reshape((-1, 1)), h[:-i].reshape((-1, 1))])
+        for i in range(1, T)
+    ]
+    H = cp.hstack([H0] + H1n)
+    if norm == "l2":
+        obj = cp.Minimize(
+            cp.norm(y - H @ s - b) + smth_penalty * cp.norm(cp.diff(h), 1)
+        )
+    elif norm == "l1":
+        obj = cp.Minimize(
+            cp.norm(y - H @ s - b, 1) + smth_penalty * cp.norm(cp.diff(h), 1)
+        )
+    cons = [b >= 0]
+    prob = cp.Problem(obj, cons)
+    prob.solve()
+    return h.value
+
+
+def solve_fit_h(y, s, N=2, s_len=60, norm="l1", tol=1e-3, max_iters: int = 30):
+    metric_df = None
+    smth_penal = 0
+    niter = 0
+    while niter < max_iters:
+        h = solve_h(y, s, s_len, norm, smth_penal)
+        lams, h_fit = fit_sumexp(h, N)
+        met = {
+            "iter": niter,
+            "smth_penal": smth_penal,
+            "isreal": (np.imag(lams) == 0).all(),
+        }
+        print(met)
+        metric_df = pd.concat([metric_df, pd.DataFrame([met])])
+        smth_ub = metric_df.loc[metric_df["isreal"], "smth_penal"].min()
+        smth_lb = metric_df.loc[~metric_df["isreal"], "smth_penal"].max()
+        if smth_ub == 0:
+            break
+        elif np.isnan(smth_ub):
+            smth_penal = max(metric_df["smth_penal"].max(), 1) * 2
+        elif np.isnan(smth_lb):
+            smth_penal = smth_ub / 2
+        else:
+            assert smth_ub >= smth_lb
+            if met["isreal"] and smth_ub - smth_lb < tol:
+                break
+            else:
+                smth_penal = (smth_ub + smth_lb) / 2
+        niter += 1
+    else:
+        warnings.warn("max smth iteration reached")
+    return lams, h, h_fit, metric_df
 
 
 def solve_g_cons(y, s, lam_tol=1e-6, lam_start=1, max_iter=30):
@@ -155,15 +254,17 @@ c, s = np.array(C_gt.isel(unit_id=0)).reshape((-1, 1)), np.array(
 ).reshape((-1, 1))
 noise_lev = [0, 1, 2, 5, 10]
 methods = [
-    "est-smth0",
+    # "est-smth0",
     "est-smth20",
     "est-smth100",
     "est-naive",
     "solve-l1",
-    "solve-l2",
+    # "solve-l2",
+    "free-l1",
 ]
 res_df = []
 for ns in noise_lev:
+    np.random.seed(0)
     y = c + ns * np.random.random(c.shape)
     res_df.append(
         pd.DataFrame(
@@ -171,7 +272,7 @@ for ns in noise_lev:
                 "method": "y",
                 "noise": ns,
                 "frame": np.arange(len(y)),
-                "value": norm(y.squeeze()),
+                "value": y.squeeze(),
             }
         )
     )
@@ -181,7 +282,7 @@ for ns in noise_lev:
                 "method": "c",
                 "noise": ns,
                 "frame": np.arange(len(y)),
-                "value": norm(c.squeeze()),
+                "value": c.squeeze(),
             }
         )
     )
@@ -191,7 +292,7 @@ for ns in noise_lev:
                 "method": "s",
                 "noise": ns,
                 "frame": np.arange(len(y)),
-                "value": norm(s.squeeze()),
+                "value": scal_like(s.squeeze(), c),
             }
         )
     )
@@ -206,6 +307,7 @@ for ns in noise_lev:
                 g, tn = estimate_coefs(
                     y, p=2, noise_freq=0.5, use_smooth=False, add_lag=0
                 )
+            c_est = scal_like(convolve_g(s, g), c)
         elif m == "solve":
             g = solve_g(y, s, norm=param)
             G = construct_G(g, len(y))
@@ -216,11 +318,47 @@ for ns in noise_lev:
                         "method": mthd + "-y",
                         "noise": ns,
                         "frame": np.arange(len(y)),
-                        "value": norm(y_est),
+                        "value": y_est,
                     }
                 )
             )
-        c_est = convolve_g(s, g)
+            c_est = scal_like(convolve_g(s, g), c)
+        elif m == "free":
+            h_nopen = solve_h(y, s)
+            _, h_nopen_fit = fit_sumexp(h_nopen, 2)
+            lams, h, h_fit, mets = solve_fit_h(y, s)
+            c_est = convolve_h(s, h)
+            g = None
+            res_df.append(
+                pd.DataFrame(
+                    {
+                        "method": mthd + "-no_penal",
+                        "noise": ns,
+                        "frame": np.arange(len(y)),
+                        "value": convolve_h(s, h_nopen),
+                    }
+                )
+            )
+            res_df.append(
+                pd.DataFrame(
+                    {
+                        "method": mthd + "-no_penal-fit",
+                        "noise": ns,
+                        "frame": np.arange(len(y)),
+                        "value": convolve_h(s, h_nopen_fit),
+                    }
+                )
+            )
+            res_df.append(
+                pd.DataFrame(
+                    {
+                        "method": mthd + "-fit",
+                        "noise": ns,
+                        "frame": np.arange(len(y)),
+                        "value": convolve_h(s, h_fit),
+                    }
+                )
+            )
         print("method: {}, g: {}".format(mthd, g))
         res_df.append(
             pd.DataFrame(
@@ -228,7 +366,7 @@ for ns in noise_lev:
                     "method": mthd,
                     "noise": ns,
                     "frame": np.arange(len(y)),
-                    "value": norm(c_est),
+                    "value": c_est,
                 }
             )
         )
