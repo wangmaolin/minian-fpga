@@ -137,6 +137,7 @@ def fit_sumexp(y, N, x=None):
 
 
 def solve_h(y, s, s_len=60, norm="l1", smth_penalty=0):
+    y, s = y.squeeze(), s.squeeze()
     T = len(s)
     if s_len is None:
         s_len = T
@@ -144,25 +145,21 @@ def solve_h(y, s, s_len=60, norm="l1", smth_penalty=0):
         s_len = min(s_len, T)
     b = cp.Variable()
     h = cp.Variable(s_len)
-    h = cp.hstack([h, np.zeros(T - s_len)])
-    H0 = h.reshape((-1, 1))
-    H1n = [
-        cp.vstack([np.zeros(i).reshape((-1, 1)), h[:-i].reshape((-1, 1))])
-        for i in range(1, T)
-    ]
-    H = cp.hstack([H0] + H1n)
+    h = cp.hstack([h, 0])
     if norm == "l2":
         obj = cp.Minimize(
-            cp.norm(y - H @ s - b) + smth_penalty * cp.norm(cp.diff(h), 1)
+            cp.norm(y - cp.convolve(s, h)[:T] - b)
+            + smth_penalty * cp.norm(cp.diff(h), 1)
         )
     elif norm == "l1":
         obj = cp.Minimize(
-            cp.norm(y - H @ s - b, 1) + smth_penalty * cp.norm(cp.diff(h), 1)
+            cp.norm(y - cp.convolve(s, h)[:T] - b, 1)
+            + smth_penalty * cp.norm(cp.diff(h), 1)
         )
     cons = [b >= 0]
     prob = cp.Problem(obj, cons)
     prob.solve()
-    return h.value
+    return np.concatenate([h.value, np.zeros(T - s_len - 1)])
 
 
 def solve_fit_h(y, s, N=2, s_len=60, norm="l1", tol=1e-3, max_iters: int = 30):
