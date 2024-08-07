@@ -136,7 +136,7 @@ def fit_sumexp(y, N, x=None):
     return lams, y_fit
 
 
-def solve_h(y, s, s_len=60, norm="l1", smth_penalty=0):
+def solve_h(y, s, s_len=60, norm="l1", smth_penalty=0, ignore_len=0):
     y, s = y.squeeze(), s.squeeze()
     T = len(s)
     if s_len is None:
@@ -149,12 +149,12 @@ def solve_h(y, s, s_len=60, norm="l1", smth_penalty=0):
     if norm == "l2":
         obj = cp.Minimize(
             cp.norm(y - cp.convolve(s, h)[:T] - b)
-            + smth_penalty * cp.norm(cp.diff(h), 1)
+            + smth_penalty * cp.norm(cp.diff(h[ignore_len:]), 1)
         )
     elif norm == "l1":
         obj = cp.Minimize(
             cp.norm(y - cp.convolve(s, h)[:T] - b, 1)
-            + smth_penalty * cp.norm(cp.diff(h), 1)
+            + smth_penalty * cp.norm(cp.diff(h[ignore_len:]), 1)
         )
     cons = [b >= 0]
     prob = cp.Problem(obj, cons)
