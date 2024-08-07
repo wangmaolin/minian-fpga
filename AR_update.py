@@ -262,7 +262,7 @@ methods = [
 res_df = []
 for ns in noise_lev:
     np.random.seed(0)
-    y = c + ns * np.random.random(c.shape)
+    y = c + ns * (np.random.random(c.shape) - 0.5)
     res_df.append(
         pd.DataFrame(
             {
