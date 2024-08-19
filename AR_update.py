@@ -164,6 +164,7 @@ def solve_h(y, s, s_len=60, norm="l1", smth_penalty=0, ignore_len=0):
 
 def solve_fit_h(y, s, N=2, s_len=60, norm="l1", tol=1e-3, max_iters: int = 30):
     metric_df = None
+    h_df = None
     smth_penal = 0
     niter = 0
     while niter < max_iters:
@@ -176,6 +177,14 @@ def solve_fit_h(y, s, N=2, s_len=60, norm="l1", tol=1e-3, max_iters: int = 30):
         }
         print(met)
         metric_df = pd.concat([metric_df, pd.DataFrame([met])])
+        h_df = pd.concat(
+            [
+                h_df,
+                pd.DataFrame(
+                    {"iter": niter, "smth_penal": smth_penal, "h": h, "h_fit": h_fit}
+                ),
+            ]
+        )
         smth_ub = metric_df.loc[metric_df["isreal"], "smth_penal"].min()
         smth_lb = metric_df.loc[~metric_df["isreal"], "smth_penal"].max()
         if smth_ub == 0:
@@ -193,7 +202,7 @@ def solve_fit_h(y, s, N=2, s_len=60, norm="l1", tol=1e-3, max_iters: int = 30):
         niter += 1
     else:
         warnings.warn("max smth iteration reached")
-    return lams, h, h_fit, metric_df
+    return lams, h, h_fit, metric_df, h_df
 
 
 def solve_g_cons(y, s, lam_tol=1e-6, lam_start=1, max_iter=30):
@@ -323,7 +332,7 @@ for ns in noise_lev:
         elif m == "free":
             h_nopen = solve_h(y, s)
             _, h_nopen_fit = fit_sumexp(h_nopen, 2)
-            lams, h, h_fit, mets = solve_fit_h(y, s)
+            lams, h, h_fit, mets, h_df = solve_fit_h(y, s)
             c_est = convolve_h(s, h)
             g = None
             res_df.append(
